@@ -1,6 +1,7 @@
 use crate::ast::{EffectCap, Expr, FnDef, Module, Stmt, TargetRef, Type};
 use crate::canon::{canonicalize_fn, CanonicalNode};
 use crate::diag::{AxiomDiagnostic, Span};
+use crate::verify::{verify_node, VerificationReport};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -12,6 +13,8 @@ pub struct IngestEntry {
     pub hash: String,
     pub short_hash: String,
     pub deduplicated: bool,
+    pub obligations_proved: usize,
+    pub verify_ms: u128,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,16 +251,18 @@ impl GraphStore {
         Ok(hash)
     }
 
-    pub fn ingest_module(&mut self, module: &Module) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
+    pub fn verify_module(&self, module: &Module) -> Result<Vec<VerificationReport>, AxiomDiagnostic> {
         let order = topo_sort_functions(&module.functions)?;
-        let mut results = Vec::with_capacity(order.len());
+        let mut temp_aliases = self.aliases.clone();
+        let mut temp_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
+        let mut reports = Vec::with_capacity(order.len());
 
         for idx in order {
             let raw_fn = &module.functions[idx];
             let node = canonicalize_fn(
                 raw_fn,
                 &|callee| {
-                    self.aliases.get(callee).cloned().ok_or_else(|| {
+                    temp_aliases.get(callee).cloned().ok_or_else(|| {
                         AxiomDiagnostic::new(
                             "E022_UNKNOWN_FUNCTION",
                             "resolve",
@@ -273,6 +278,66 @@ impl GraphStore {
                 &|prefix| self.resolve_hash_prefix(prefix),
             )?;
 
+            let report = verify_node(raw_fn, &node, &|dep_hash| {
+                if let Some(mem_node) = temp_nodes.get(dep_hash) {
+                    Ok(mem_node.clone())
+                } else {
+                    self.load_node(dep_hash)
+                }
+            })?;
+
+            temp_aliases.insert(raw_fn.name.clone(), node.hash.clone());
+            temp_nodes.insert(node.hash.clone(), node);
+            reports.push(report);
+        }
+
+        Ok(reports)
+    }
+
+    pub fn ingest_module(&mut self, module: &Module) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
+        let order = topo_sort_functions(&module.functions)?;
+        let mut staged_aliases = self.aliases.clone();
+        let mut staged_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
+        let mut staged_entries = Vec::with_capacity(order.len());
+
+        // Phase 1: Canonicalize + formally verify ALL nodes in module via Z3 before committing!
+        for idx in order {
+            let raw_fn = &module.functions[idx];
+            let node = canonicalize_fn(
+                raw_fn,
+                &|callee| {
+                    staged_aliases.get(callee).cloned().ok_or_else(|| {
+                        AxiomDiagnostic::new(
+                            "E022_UNKNOWN_FUNCTION",
+                            "resolve",
+                            format!(
+                                "Function '{}' calls unknown function '{callee}'",
+                                raw_fn.name
+                            ),
+                            Span::zero(),
+                            "Define the callee in the same input or ingest it into .axiom first",
+                        )
+                    })
+                },
+                &|prefix| self.resolve_hash_prefix(prefix),
+            )?;
+
+            let vreport = verify_node(raw_fn, &node, &|dep_hash| {
+                if let Some(mem_node) = staged_nodes.get(dep_hash) {
+                    Ok(mem_node.clone())
+                } else {
+                    self.load_node(dep_hash)
+                }
+            })?;
+
+            staged_aliases.insert(raw_fn.name.clone(), node.hash.clone());
+            staged_entries.push((raw_fn.name.clone(), node.clone(), vreport));
+            staged_nodes.insert(node.hash.clone(), node);
+        }
+
+        // Phase 2: Commit verified nodes atomically into .axiom/nodes/
+        let mut results = Vec::with_capacity(staged_entries.len());
+        for (alias, node, vreport) in staged_entries {
             let node_file = self.nodes_dir.join(format!("{}.json", node.hash));
             let deduplicated = node_file.is_file();
             if !deduplicated {
@@ -296,12 +361,14 @@ impl GraphStore {
                 })?;
             }
 
-            self.aliases.insert(raw_fn.name.clone(), node.hash.clone());
+            self.aliases.insert(alias.clone(), node.hash.clone());
             results.push(IngestEntry {
-                alias: raw_fn.name.clone(),
+                alias,
                 hash: node.hash,
                 short_hash: node.short_hash,
                 deduplicated,
+                obligations_proved: vreport.obligations_checked,
+                verify_ms: vreport.elapsed_ms,
             });
         }
 

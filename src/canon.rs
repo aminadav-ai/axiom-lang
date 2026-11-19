@@ -476,6 +476,12 @@ fn format_body(expr: &Expr, out: &mut String) {
     }
 }
 
+pub fn format_expr_human(expr: &Expr) -> String {
+    let mut out = String::new();
+    format_expr(expr, &mut out);
+    out
+}
+
 fn format_expr(expr: &Expr, out: &mut String) {
     match expr {
         Expr::IntLit(v) => out.push_str(&v.to_string()),

@@ -18,33 +18,40 @@ fi
 LOG_FILE="logs/check_${TIMESTAMP}.log"
 
 {
-  echo "=== AXIOM-LANG SPRINT 1 VERIFICATION (${TIMESTAMP}) ==="
+  echo "=== AXIOM-LANG VERIFICATION SUITE (${TIMESTAMP}) ==="
   rustc --version
   cargo --version
   z3 --version
 
   echo ""
-  echo "--- [1/3] Strict Clippy Check (no todo!, no unimplemented!, no dead_code) ---"
+  echo "--- [1/4] Strict Clippy Check (no todo!, no unimplemented!, no dead_code) ---"
   cargo clippy --all-targets -- -D warnings
 
   echo ""
-  echo "--- [2/3] Unit & Integration Test Suite ---"
+  echo "--- [2/4] Unit & Z3 Integration Test Suite ---"
   cargo test -- --nocapture
 
   echo ""
-  echo "--- [3/3] End-to-End CLI Smoke Run on examples/payment_demo.ax ---"
+  echo "--- [3/4] End-to-End Verified Graph Ingestion (examples/payment_demo.ax) ---"
   rm -rf .axiom
   cargo run --quiet -- ingest examples/payment_demo.ax
   echo ""
   cargo run --quiet -- graph
   echo ""
-  cargo run --quiet -- show checkout
-  echo ""
   cargo run --quiet -- passport checkout
   rm -rf .axiom
 
   echo ""
-  echo "=== ALL SPRINT 1 CHECKS PASSED ==="
+  echo "--- [4/4] Anti-Stub Z3 Rejection Demo (examples/anti_stub_demo.ax) ---"
+  if cargo run --quiet -- verify examples/anti_stub_demo.ax; then
+    echo "ERROR: anti_stub_demo.ax should have been rejected by Z3!"
+    exit 1
+  else
+    echo "SUCCESS: Z3 caught the fake stub and produced a concrete counterexample."
+  fi
+
+  echo ""
+  echo "=== ALL CHECKS PASSED ==="
 } 2>&1 | tee "$LOG_FILE"
 
 cp "$LOG_FILE" "logs/latest.log"

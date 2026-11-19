@@ -2,8 +2,8 @@
 name = "axiom-lang"
 version = "0.1.0"
 edition = "2021"
-description = "Axiom: Content-addressed, contract-verified AI-native programming language"
-license = "MIT"
+description = "Axiom: Content-addressed, Z3-verified AI-native programming language"
+publish = false
 
 [lib]
 name = "axiom_lang"

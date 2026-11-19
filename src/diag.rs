@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
 
@@ -28,6 +29,8 @@ pub struct DiagnosticData {
     pub message: String,
     pub span: Span,
     pub repair_hint: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub counterexample: BTreeMap<String, String>,
 }
 
 /// Pointer-sized (8-byte) machine-readable diagnostic for fast Result passing.
@@ -57,7 +60,13 @@ impl AxiomDiagnostic {
             message: message.into(),
             span,
             repair_hint: repair_hint.into(),
+            counterexample: BTreeMap::new(),
         }))
+    }
+
+    pub fn with_counterexample(mut self, cex: BTreeMap<String, String>) -> Self {
+        self.0.counterexample = cex;
+        self
     }
 
     pub fn to_json_pretty(&self) -> String {
@@ -74,9 +83,20 @@ impl fmt::Display for AxiomDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "[{}] ({}:{}): {} | hint: {}",
-            self.code, self.span.line, self.span.col, self.message, self.repair_hint
-        )
+            "[{}] ({}:{}): {}",
+            self.code, self.span.line, self.span.col, self.message
+        )?;
+        if !self.counterexample.is_empty() {
+            write!(f, "\n  counterexample: {{ ")?;
+            for (i, (k, v)) in self.counterexample.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{k} = {v}")?;
+            }
+            write!(f, " }}")?;
+        }
+        write!(f, "\n  hint: {}", self.repair_hint)
     }
 }
 

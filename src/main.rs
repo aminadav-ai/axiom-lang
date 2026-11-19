@@ -34,6 +34,35 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     match args {
+        ["verify", file_path] => {
+            let src = fs::read_to_string(file_path).map_err(|e| {
+                AxiomDiagnostic::new(
+                    "E040_FILE_READ",
+                    "cli",
+                    format!("Cannot read '{file_path}': {e}"),
+                    Span::zero(),
+                    "Provide a valid path to an .ax source file",
+                )
+            })?;
+            let module = parse_module(&src)?;
+            let store = GraphStore::open(&cwd)?;
+            let reports = store.verify_module(&module)?;
+
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&reports).unwrap_or_default()
+                );
+            } else {
+                for r in reports {
+                    println!(
+                        "  #{}  {:<26} [Z3: {} in {}ms]",
+                        r.short_hash, r.alias, r.status, r.elapsed_ms
+                    );
+                }
+            }
+            Ok(())
+        }
         ["ingest", file_path] => {
             let src = fs::read_to_string(file_path).map_err(|e| {
                 AxiomDiagnostic::new(
@@ -55,12 +84,19 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
                 );
             } else {
                 for item in entries {
-                    let tag = if item.deduplicated {
+                    let storage_tag = if item.deduplicated {
                         "dedup (identical semantics)"
                     } else {
                         "stored"
                     };
-                    println!("  #{}  {:<22} [{}]", item.short_hash, item.alias, tag);
+                    println!(
+                        "  #{}  {:<26} [Z3 proved {} oblig. ({}ms) | {}]",
+                        item.short_hash,
+                        item.alias,
+                        item.obligations_proved,
+                        item.verify_ms,
+                        storage_tag
+                    );
                 }
             }
             Ok(())
@@ -135,24 +171,26 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             if json_mode {
                 println!("{}", serde_json::to_string_pretty(&p).unwrap_or_default());
             } else {
-                println!("=== ПАСПОРТ БЕЗОПАСНОСТИ AXIOM ===");
+                println!("=== AXIOM SECURITY PASSPORT ===");
                 println!(
-                    "Узел:        #{} ({})",
+                    "Node:                 #{} ({})",
                     p.short_hash,
                     p.aliases.join(", ")
                 );
-                println!("Узлов в графе вызова: {}", p.total_reachable_nodes);
+                println!("Reachable Subgraph:   {} node(s)", p.total_reachable_nodes);
                 println!(
-                    "Работа с Secret<T>:   {}",
-                    if p.uses_secret_types { "ДА" } else { "НЕТ" }
+                    "Touches Secret<T>:    {}",
+                    if p.uses_secret_types { "YES" } else { "NO" }
                 );
                 if p.is_pure {
-                    println!("Права / Эффекты:      🚫 ЧИСТАЯ ФУНКЦИЯ (сеть, диск и часы физически отсутствуют)");
+                    println!(
+                        "Capabilities:         PURE (zero network, filesystem, or clock access)"
+                    );
                 } else {
-                    println!("Права / Эффекты:");
+                    println!("Capabilities:");
                     for cap in p.capabilities {
                         println!(
-                            "  ⚠️  {:<18} путь: {}",
+                            "  [CAP] {:<20} via: {}",
                             cap.effect,
                             cap.witness_chain.join(" -> ")
                         );
@@ -181,7 +219,7 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             "cli",
             "Invalid CLI arguments",
             Span::zero(),
-            "Usage: axiom <ingest <file.ax> | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
+            "Usage: axiom <verify <file.ax> | ingest <file.ax> | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
         )),
     }
 }
