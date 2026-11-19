@@ -19,7 +19,7 @@ use std::time::Instant;
 
 const ELF_BASE_VADDR: u64 = 0x0040_0000;
 const BSS_MEM_VADDR: u64 = 0x0080_0000;
-const BSS_MEM_BYTES: u64 = 0x0040_0000; // 4 MiB zero-initialized linear memory
+const BSS_MEM_BYTES: u64 = 0x0080_0000; // 8 MiB zero-initialized linear memory
 const EHDR_SIZE: usize = 64;
 const PHDR_SIZE: usize = 56;
 const HEADERS_TOTAL: usize = EHDR_SIZE + 2 * PHDR_SIZE; // 176 bytes (0xB0)
@@ -549,8 +549,8 @@ fn emit_x86_expr(
         }
         Expr::MemLoad { index } => {
             emit_x86_expr(index, ctx, out, relocs)?;
-            // and eax, 0xFFFFF
-            out.extend_from_slice(&[0x25, 0xFF, 0xFF, 0x0F, 0x00]);
+            // and eax, 0x1FFFFF
+            out.extend_from_slice(&[0x25, 0xFF, 0xFF, 0x1F, 0x00]);
             // mov rdx, BSS_MEM_VADDR
             out.extend_from_slice(&[0x48, 0xBA]);
             out.extend_from_slice(&BSS_MEM_VADDR.to_le_bytes());
@@ -559,7 +559,7 @@ fn emit_x86_expr(
         }
         Expr::MemStore { index, value } => {
             emit_x86_expr(index, ctx, out, relocs)?;
-            out.extend_from_slice(&[0x25, 0xFF, 0xFF, 0x0F, 0x00]); // and eax, 0xFFFFF
+            out.extend_from_slice(&[0x25, 0xFF, 0xFF, 0x1F, 0x00]); // and eax, 0x1FFFFF
             out.push(0x50); // push rax (masked idx)
             emit_x86_expr(value, ctx, out, relocs)?;
             out.push(0x59); // pop rcx (masked idx)

@@ -276,11 +276,11 @@ fn emit_strata_wasm_bytes(
     }
     push_section(&mut wasm, 3, &sec_func);
 
-    // Section 5: Linear Memory section (64 pages = 4 MiB: state + time-travel snapshots + RGBA framebuffer)
+    // Section 5: Linear Memory section (128 pages = 8 MiB: state + 256x256 textures + 3D vertex buffers)
     let mut sec_mem = Vec::new();
     push_u32_leb(&mut sec_mem, 1); // 1 memory
     sec_mem.push(0x00); // flags: min only
-    push_u32_leb(&mut sec_mem, 64); // 64 * 64 KiB = 4 MiB
+    push_u32_leb(&mut sec_mem, 128); // 128 * 64 KiB = 8 MiB
     push_section(&mut wasm, 5, &sec_mem);
 
     // Section 7: Export section (`memory` + `<name>` i32 wrapper + `<name>_i64` raw i64 fn)
@@ -549,8 +549,8 @@ fn emit_safe_mem_addr_i32(
 ) -> Result<(), AxiomDiagnostic> {
     emit_expr(index_expr, ctx, out)?;
     out.push(0xA7); // i32.wrap_i64
-    out.push(0x41); // i32.const 0xFFFFF (1,048,575 words = 4 MiB)
-    push_i32_leb(out, 0x000F_FFFF);
+    out.push(0x41); // i32.const 0x1FFFFF (2,097,151 words = 8 MiB)
+    push_i32_leb(out, 0x001F_FFFF);
     out.push(0x71); // i32.and
     out.push(0x41); // i32.const 2
     push_i32_leb(out, 2);

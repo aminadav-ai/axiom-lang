@@ -5,7 +5,7 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 > **Live Interactive Compiler & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**  
-> **Live 1996-Style 3D Shooter in `17.40 KB` Pure Axiom Wasm:** **[Axiom Slipgate](https://aminadav-ai.github.io/axiom-slipgate/)** ([Repo](https://github.com/aminadav-ai/axiom-slipgate))  
+> **Live True-3D Polygonal GPU Shooter in `28.64 KB` Pure Axiom Wasm (`-[Mem, Gpu]->`):** **[Axiom Slipgate v2.0 GPU HD](https://aminadav-ai.github.io/axiom-slipgate/)** ([Repo](https://github.com/aminadav-ai/axiom-slipgate))  
 > **Live HD 2.5D Isometric Game in `15.03 KB` Pure Axiom Wasm:** **[Axiom Lion Herd HD](https://aminadav-ai.github.io/axiom-lion-herd/)** ([Repo](https://github.com/aminadav-ai/axiom-lion-herd))  
 > **Live HD 3D Glass Puzzle in `11.50 KB` Pure Axiom Wasm:** **[Axiom Color Lines 98 HD](https://aminadav-ai.github.io/axiom-color-lines/)** ([Repo](https://github.com/aminadav-ai/axiom-color-lines))
 
@@ -15,11 +15,11 @@
 
 ## Games & Interactive Demos Built in 100% Axiom (`v0.2`)
 
-All three complete browser games below are written **100% in Axiom** (`Telos` Z3 contracts + `Flux` content-addressed graph + `Strata` linear-memory physics, HD software 2.5D/3D rasterizers, procedural Web Audio triggers, and Time-Travel ring buffers) and compiled **directly to standalone W3C WebAssembly bytecode with ZERO `rustc`, ZERO `wasm-bindgen`, and ZERO game-engine runtime**:
+All three complete browser games below are written **100% in Axiom** (`Telos` Z3 contracts + `Flux` content-addressed graph + `Strata` linear-memory physics, procedural 2.5D/3D engines, `-[Mem, Gpu]->` WebGL2 hardware 3D rendering, procedural Web Audio triggers, and Time-Travel ring buffers) and compiled **directly to standalone W3C WebAssembly bytecode with ZERO `rustc`, ZERO `wasm-bindgen`, and ZERO game-engine runtime**:
 
-| Project | Play Live | Source | `.wasm` Binary | Gzipped Wire Size | Z3 Proofs Proved | Resolution & Engine | Software FPS (V8) |
+| Project | Play Live | Source | `.wasm` Binary | Gzipped Wire Size | Z3 Proofs Proved | Resolution & Engine | Runtime FPS |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Axiom Slipgate** *(1996-Style Dark-Industrial 3D FPS, 8 Procedural `64×64` Textures, Acid Slime, Boomstick, Combat Rewind)* | **[Play Live](https://aminadav-ai.github.io/axiom-slipgate/)** | [`slipgate.ax`](https://github.com/aminadav-ai/axiom-slipgate/blob/main/src/slipgate.ax) | **`17.40 KB`** *(17,817 B)* | **`7.10 KB`** | **155 / 155** | **`720×450`** Textured 3D DDA + Floor/Sky | **~89 FPS** |
+| **Axiom Slipgate v2.0 GPU HD** *(True 3D Polygonal Citadel, `256×256` Bump-Mapped Worley/FBM Textures, Overhead Slatted Sky-Bridge, Diagonal Rafters, 3D Shambler/Knight/Grunt, Cylindrical Super-Shotgun)* | **[Play Live](https://aminadav-ai.github.io/axiom-slipgate/)** | [`slipgate.ax`](https://github.com/aminadav-ai/axiom-slipgate/blob/main/src/slipgate.ax) | **`28.64 KB`** *(29,326 B)* | **`10.95 KB`** | **100% Proved** | **Native HD `WebGL2`** (`-[Mem, Gpu]->` Bump + Multi-Light) | **60+ FPS** (`0.48 ms` CPU) |
 | **Axiom Lion Herd HD** *(Sculpted 2.5D Lions & Woolly Sheep, Boids AI, Timber Corral Rails, Audio, Time-Travel)* | **[Play Live](https://aminadav-ai.github.io/axiom-lion-herd/)** | [`lion_herd.ax`](https://github.com/aminadav-ai/axiom-lion-herd/blob/main/src/lion_herd.ax) | **`15.03 KB`** *(15,387 B)* | **`6.31 KB`** | **90+ Proved** | **`880×520`** `isqrt` Sculpted 2.5D | **~86 FPS** |
 | **Axiom Color Lines 98 HD** *(True-3D Phong/Caustic Glass Jewels, Animated Tile-by-Tile Path Hopping, Audio, Turn Scrubbing)* | **[Play Live](https://aminadav-ai.github.io/axiom-color-lines/)** | [`color_lines.ax`](https://github.com/aminadav-ai/axiom-color-lines/blob/main/src/color_lines.ax) | **`11.50 KB`** *(11,771 B)* | **`4.51 KB`** | **30+ Proved** | **`684×760`** Phong `(N·H)^16` + AA | **60+ FPS** |
 | **Axiom Payment & Taint Inspector** *(Secret\<T\> Redaction, Security Passport, Flight Recorder)* | **[Open Demo](https://aminadav-ai.github.io/axiom-lang/)** | [`payment_demo.ax`](examples/payment_demo.ax) | **`32.3 KB`** | **`~11.4 KB`** | **8 / 8** | Interactive Inspector | Interactive |
@@ -47,7 +47,7 @@ Instead of dozens of overlapping languages for scripts, backends, frontends, and
 | :--- | :--- | :--- |
 | **`Axiom.Telos`** | **Intent, Contracts & Proofs.** Preconditions (`req`), postconditions (`ens`), non-zero divisor obligations, and vacuous-contract guards proved mechanically via **Microsoft Z3** at compile time. | **Implemented Natively** (`src/verify.rs`) |
 | **`Axiom.Flux`** | **Content-Addressed Logic & Effect Graph.** Zero files, zero imports. Every function is normalized (De Bruijn positional variables) and addressed by its 256-bit `SHA-256` semantic hash (`#768a631876e7`), with explicit capability arrows `-[Net("..."), Audit, Mem]->` and opaque `Secret<T>` taint pipes. | **Implemented Natively** (`src/canon.rs`, `src/store.rs`, `src/typecheck.rs`) |
-| **`Axiom.Strata`** | **Deterministic Silicon & Linear Memory.** Bounded loops (`while cond max N`), bitwise SIMD-friendly math, 4 MiB hardware-masked linear memory (`mem_load`/`mem_store`), **direct W3C WebAssembly binary emission** (`0.67 KB`–`10.8 KB`), and **direct Linux `x86_64` ELF64 machine-code emission** (`1.45 KB` executables) with **zero `rustc`**. | **Implemented Natively (`v0.2`)** (`src/strata_wasm.rs`, `src/strata_elf.rs`) + Rust host bridge (`src/codegen.rs`) for high-level `Secret<str>` I/O |
+| **`Axiom.Strata`** | **Deterministic Silicon, Linear Memory & Hardware GPU.** Bounded loops (`while cond max N`), bitwise SIMD-friendly math, 8 MiB hardware-masked linear memory (`mem_load`/`mem_store`), explicit `-[Mem, Gpu]->` WebGL2 3D capability, **direct W3C WebAssembly binary emission** (`0.67 KB`–`28.64 KB`), and **direct Linux `x86_64` ELF64 machine-code emission** (`1.45 KB` executables) with **zero `rustc`**. | **Implemented Natively (`v0.2`)** (`src/strata_wasm.rs`, `src/strata_elf.rs`) + Rust host bridge (`src/codegen.rs`) for high-level `Secret<str>` I/O |
 
 ### Dual Backend Architecture in `v0.2`
 
