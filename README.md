@@ -5,15 +5,32 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 > **Live Interactive Compiler & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**  
-> **Live True-3D Polygonal GPU Shooter in `30.38 KB` Pure Axiom Wasm (`-[Mem, Gpu]->`):** **[Axiom Slipgate v2.0 GPU HD](https://aminadav-ai.github.io/axiom-slipgate/)** ([Repo](https://github.com/aminadav-ai/axiom-slipgate))  
-> **Live True-3D Sculpted Savanna Shepherd in `17.87 KB` Pure Axiom Wasm (`-[Mem, Gpu]->`):** **[Axiom Lion Herd v3.0 GPU HD](https://aminadav-ai.github.io/axiom-lion-herd/)** ([Repo](https://github.com/aminadav-ai/axiom-lion-herd))  
-> **Live True-3D Refractive Glass & Marble Puzzle in `15.32 KB` Pure Axiom Wasm (`-[Mem, Gpu]->`):** **[Axiom Color Lines 98 v3.0 GPU HD](https://aminadav-ai.github.io/axiom-color-lines/)** ([Repo](https://github.com/aminadav-ai/axiom-color-lines))
+> **Stage 2 — Zero-DOM Hardware GPU UI Engine (`15.34 KB` Wasm, `1` Draw Call):** **[Axiom-UI v1.0 Gallery](https://aminadav-ai.github.io/axiom-ui/)** ([Repo](https://github.com/aminadav-ai/axiom-ui))  
+> **Stage 2 — 1,000,000-Cell Hardware GPU Spreadsheet (`21.65 KB` Wasm):** **[Axiom Grid v1.0](https://aminadav-ai.github.io/axiom-grid/)** ([Repo](https://github.com/aminadav-ai/axiom-grid))  
+> **Stage 2 — Multi-Window GPU Desktop OS ("Electron Killer", `20.57 KB` Wasm):** **[Axiom Workspace v1.0](https://aminadav-ai.github.io/axiom-workspace/)** ([Repo](https://github.com/aminadav-ai/axiom-workspace))  
+> **Stage 2 — Capability Gatekeeper & Legacy HTML Clean-Reader (`21.21 KB` Wasm):** **[Axiom Capsule Browser v1.0](https://aminadav-ai.github.io/axiom-capsule-browser/)** ([Repo](https://github.com/aminadav-ai/axiom-capsule-browser))  
+> **Stage 1 — True-3D Polygonal GPU Shooter (`30.38 KB` Wasm):** **[Axiom Slipgate v2.0 GPU HD](https://aminadav-ai.github.io/axiom-slipgate/)** ([Repo](https://github.com/aminadav-ai/axiom-slipgate))  
+> **Stage 1 — True-3D Sculpted Savanna Shepherd (`17.87 KB` Wasm):** **[Axiom Lion Herd v3.0 GPU HD](https://aminadav-ai.github.io/axiom-lion-herd/)** ([Repo](https://github.com/aminadav-ai/axiom-lion-herd))  
+> **Stage 1 — True-3D Refractive Glass & Marble Puzzle (`15.32 KB` Wasm):** **[Axiom Color Lines 98 v3.0 GPU HD](https://aminadav-ai.github.io/axiom-color-lines/)** ([Repo](https://github.com/aminadav-ai/axiom-color-lines))
 
 **Axiom** is an AI-native programming language stack built for a world where autonomous AI agents write the software and humans verify **intent, mathematical guarantees, and capability boundaries** rather than auditing 50,000 lines of source text.
 
 ---
 
-## Games & Interactive Demos Built in 100% Axiom (`v0.2`)
+## Stage 2 Flagship Suite: `axiom-ui` Zero-DOM Hardware GPU Applications
+
+All four Stage 2 applications below eliminate **HTML DOM widgets, CSS Cascade/Reflow, Virtual-DOM diffing, and Electron (`~250 MB`)**, rendering rounded SDF surfaces, drop shadows, anti-aliased vector charts/wires, hardware scissor-clipped scrolling viewports, and HiDPI typography in **a single `gl.drawArraysInstanced` GPU draw call** directly from `Axiom.Strata` linear memory (`zero rustc`):
+
+| Application | Launch Live | Source | `.wasm` Binary | Gzipped Wire Size | Z3 Proofs | Draw Calls / Frame | CPU Layout Time |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Axiom-UI v1.0 Engine & Gallery** *(Interactive GPU Text Input, Switches, Sliders, Live SDF Waveform, Z3 Proofs & 120-Frame Time-Travel)* | **[Launch App](https://aminadav-ai.github.io/axiom-ui/)** | [`axiom_ui_showcase.ax`](https://github.com/aminadav-ai/axiom-ui/blob/main/src/axiom_ui_showcase.ax) | **`15.34 KB`** *(15,707 B)* | **`5.38 KB`** | **100% Proved** | **`1` Instanced Call** (`624` prims) | **`0.20 ms`** |
+| **Axiom Grid v1.0** *(1,000,000-Cell `1000×1000` `A1..ALL1000` Spreadsheet, Live `=SUM`/`=AVG`/`=MAX`, `fx` Bar, Live GPU Charts & Time-Travel)* | **[Launch App](https://aminadav-ai.github.io/axiom-grid/)** | [`grid.ax`](https://github.com/aminadav-ai/axiom-grid/blob/main/src/grid.ax) | **`21.65 KB`** *(22,167 B)* | **`7.93 KB`** | **100% Proved** | **`1` Instanced Call** (`1,347` prims) | **`0.50 ms`** |
+| **Axiom Workspace v1.0** *(Multi-Window GPU Desktop OS: 4 Draggable/Resizable Z-Ordered Windows, `Flux` Security Graph, Stress-Test, Z3 Calc & Time-Travel)* | **[Launch App](https://aminadav-ai.github.io/axiom-workspace/)** | [`workspace.ax`](https://github.com/aminadav-ai/axiom-workspace/blob/main/src/workspace.ax) | **`20.57 KB`** *(21,062 B)* | **`6.84 KB`** | **100% Proved** | **`1` Instanced Call** (`1,327` prims) | **`0.23 ms`** |
+| **Axiom Capsule Browser v1.0** *(Prototype of `axiom-web`: Pre-Execution `axiom.passport` Spyware Gatekeeper + Pure-Axiom Legacy HTML Clean-Reader)* | **[Launch App](https://aminadav-ai.github.io/axiom-capsule-browser/)** | [`capsule_browser.ax`](https://github.com/aminadav-ai/axiom-capsule-browser/blob/main/src/capsule_browser.ax) | **`21.21 KB`** *(21,714 B)* | **`7.04 KB`** | **100% Proved** | **`1` Instanced Call** (`762` prims) | **`0.14 ms`** |
+
+---
+
+## Stage 1 Flagship Suite: 3D Hardware GPU Games Built in 100% Axiom (`v0.2`)
 
 All three complete browser games below are written **100% in Axiom** (`Telos` Z3 contracts + `Flux` content-addressed graph + `Strata` 8 MiB linear-memory physics, procedural `256×256` Worley/FBM bump-mapped textures, `-[Mem, Gpu]->` WebGL2 hardware 3D rendering, procedural Web Audio triggers, and Time-Travel ring buffers) and compiled **directly to standalone W3C WebAssembly bytecode with ZERO `rustc`, ZERO `wasm-bindgen`, and ZERO game-engine runtime**:
 
@@ -108,8 +125,8 @@ cargo run -- run checkout "sk_live_secret_token" 10000 --trace
 
 ## The 7-Stage Axiom Roadmap
 
-1. **`axiom-lang` (Completed — `v0.1` & `v0.2`):** Content-addressed semantic graph, Z3 anti-stub contract prover, `Secret<T>` taint pipes, native `Axiom.Strata` zero-`rustc` `.wasm` & `x86_64` ELF64 emitters, and Time-Travel execution.
-2. **`axiom-ui` (Stage 2):** Ultra-lightweight GPU/Wasm scene-graph engine replacing bloated Electron/HTML/CSS stacks.
+1. **`axiom-lang` (Completed — `v0.1` & `v0.2`):** Content-addressed semantic graph, Z3 anti-stub contract prover, `Secret<T>` taint pipes, native `Axiom.Strata` zero-`rustc` `.wasm` (with static zero-copy string pool) & `x86_64` ELF64 emitters, and Time-Travel execution.
+2. **`axiom-ui` (Completed — Stage 2):** Unified 1-Draw-Call WebGL2 SDF & HiDPI Font-Atlas GPU UI engine replacing Electron/HTML/CSS stacks, demonstrated via [`axiom-ui`](https://github.com/aminadav-ai/axiom-ui), [`axiom-grid`](https://github.com/aminadav-ai/axiom-grid) (1M cells), [`axiom-workspace`](https://github.com/aminadav-ai/axiom-workspace) (Multi-Window Desktop OS), and [`axiom-capsule-browser`](https://github.com/aminadav-ai/axiom-capsule-browser).
 3. **`axiom-shell` (Stage 3):** Natural-language OS shell translating human intent into Z3-verified capability graphs.
 4. **`axiom-studio` (Stage 4):** Native multi-agent graph IDE written in Axiom (conflict-free parallel node editing).
 5. **`axiom-web` (Stage 5):** Native player for Axiom web capsules with local sandboxed sanitization.

@@ -158,7 +158,7 @@ pub fn collect_multi_root_subgraph(
 pub fn check_strata_compatible(node: &CanonicalNode) -> Result<(), AxiomDiagnostic> {
     let f = &node.ast;
     for p in &f.params {
-        if !matches!(p.ty, Type::I64 | Type::Bool | Type::Unit) {
+        if !matches!(p.ty, Type::I64 | Type::Bool | Type::Unit | Type::Str) {
             return Err(AxiomDiagnostic::new(
                 "E085_STRATA_UNSUPPORTED_TYPE",
                 "strata",
@@ -167,11 +167,11 @@ pub fn check_strata_compatible(node: &CanonicalNode) -> Result<(), AxiomDiagnost
                     node.short_hash, p.ty
                 ),
                 Span::zero(),
-                "Strata direct machine/Wasm emitter operates on unboxed i64, bool, unit, and linear memory (Mem)",
+                "Strata direct machine/Wasm emitter operates on unboxed i64, bool, str, unit, and linear memory (Mem)",
             ));
         }
     }
-    if !matches!(f.ret_type, Type::I64 | Type::Bool | Type::Unit) {
+    if !matches!(f.ret_type, Type::I64 | Type::Bool | Type::Unit | Type::Str) {
         return Err(AxiomDiagnostic::new(
             "E085_STRATA_UNSUPPORTED_TYPE",
             "strata",
@@ -180,10 +180,48 @@ pub fn check_strata_compatible(node: &CanonicalNode) -> Result<(), AxiomDiagnost
                 node.short_hash, f.ret_type
             ),
             Span::zero(),
-            "Return i64, bool, or unit from Strata functions",
+            "Return i64, bool, str, or unit from Strata functions",
         ));
     }
     Ok(())
+}
+
+const STRATA_STR_WORD_BASE: u32 = 2_030_000; // Byte offset 8,120,000 inside 8 MiB linear memory
+
+struct StrataStrPool {
+    map: BTreeMap<String, i64>,
+    words: Vec<i32>,
+}
+
+impl StrataStrPool {
+    fn new() -> Self {
+        Self {
+            map: BTreeMap::new(),
+            words: Vec::new(),
+        }
+    }
+
+    fn intern(&mut self, s: &str) -> i64 {
+        if let Some(&addr) = self.map.get(s) {
+            return addr;
+        }
+        let word_addr = (STRATA_STR_WORD_BASE as usize + self.words.len()) as i64;
+        let bytes = s.as_bytes();
+        self.words.push(bytes.len() as i32);
+        for &b in bytes {
+            self.words.push(b as i32);
+        }
+        self.map.insert(s.to_string(), word_addr);
+        word_addr
+    }
+
+    fn to_le_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.words.len() * 4);
+        for &w in &self.words {
+            out.extend_from_slice(&w.to_le_bytes());
+        }
+        out
+    }
 }
 
 fn emit_strata_wasm_bytes(
@@ -306,12 +344,14 @@ fn emit_strata_wasm_bytes(
     }
     push_section(&mut wasm, 7, &sec_exp);
 
-    // Section 10: Code section
+    // Section 10: Code section (simultaneously interns static StrLit constants into StrPool)
+    let mut str_pool = StrataStrPool::new();
     let mut sec_code = Vec::new();
     push_u32_leb(&mut sec_code, func_type_indices.len() as u32);
 
     for (self_idx, node) in nodes.iter().enumerate() {
-        let body_bytes = compile_node_body(node, self_idx as u32, &hash_to_func_idx)?;
+        let body_bytes =
+            compile_node_body(node, self_idx as u32, &hash_to_func_idx, &mut str_pool)?;
         push_u32_leb(&mut sec_code, body_bytes.len() as u32);
         sec_code.extend_from_slice(&body_bytes);
     }
@@ -339,6 +379,20 @@ fn emit_strata_wasm_bytes(
     }
     push_section(&mut wasm, 10, &sec_code);
 
+    // Section 11: Data section (static read-only string pool at word base 2,030,000 = byte 8,120,000)
+    if !str_pool.words.is_empty() {
+        let raw_str_bytes = str_pool.to_le_bytes();
+        let mut sec_data = Vec::with_capacity(16 + raw_str_bytes.len());
+        push_u32_leb(&mut sec_data, 1); // 1 active data segment
+        sec_data.push(0x00); // active memory 0
+        sec_data.push(0x41); // i32.const
+        push_i32_leb(&mut sec_data, (STRATA_STR_WORD_BASE * 4) as i32);
+        sec_data.push(0x0B); // end const expr
+        push_u32_leb(&mut sec_data, raw_str_bytes.len() as u32);
+        sec_data.extend_from_slice(&raw_str_bytes);
+        push_section(&mut wasm, 11, &sec_data);
+    }
+
     // Custom Section 0: "axiom.passport" (embedded compile-time SecurityPassport JSON)
     if !passport_json.is_empty() {
         let mut sec_custom = Vec::new();
@@ -353,6 +407,7 @@ fn emit_strata_wasm_bytes(
 struct FnCodegenCtx<'a> {
     self_idx: u32,
     hash_to_func_idx: &'a BTreeMap<String, u32>,
+    str_pool: &'a mut StrataStrPool,
     local_map: BTreeMap<String, u32>,
     next_local_idx: u32,
     extra_i64_locals: u32,
@@ -374,6 +429,7 @@ fn compile_node_body(
     node: &CanonicalNode,
     self_idx: u32,
     hash_to_func_idx: &BTreeMap<String, u32>,
+    str_pool: &mut StrataStrPool,
 ) -> Result<Vec<u8>, AxiomDiagnostic> {
     let f: &FnDef = &node.ast;
     let mut local_map = BTreeMap::new();
@@ -384,6 +440,7 @@ fn compile_node_body(
     let mut ctx = FnCodegenCtx {
         self_idx,
         hash_to_func_idx,
+        str_pool,
         local_map,
         next_local_idx: f.params.len() as u32,
         extra_i64_locals: 0,
@@ -576,13 +633,18 @@ fn emit_expr(
             out.push(0x42);
             push_i64_leb(out, 0);
         }
-        Expr::StrLit(_) | Expr::SecretWrap(_) | Expr::Reveal { .. } => {
+        Expr::StrLit(s) => {
+            let word_addr = ctx.str_pool.intern(s);
+            out.push(0x42); // i64.const <word_addr>
+            push_i64_leb(out, word_addr);
+        }
+        Expr::SecretWrap(_) | Expr::Reveal { .. } => {
             return Err(AxiomDiagnostic::new(
                 "E085_STRATA_UNSUPPORTED_EXPR",
                 "strata-wasm",
-                "Heap string / Secret expressions belong to Axiom.Flux, not low-level Axiom.Strata kernels",
+                "Secret expressions belong to Axiom.Flux, not low-level Axiom.Strata kernels",
                 Span::zero(),
-                "Use i64, bool, unit, and linear memory inside Strata kernels",
+                "Use i64, bool, str, unit, and linear memory inside Strata kernels",
             ));
         }
         Expr::Var(name) => {
@@ -706,13 +768,24 @@ fn emit_expr(
             out.push(0x42);
             push_i64_leb(out, 0);
         }
-        Expr::Perform { args, .. } => {
-            for a in args {
-                emit_expr(a, ctx, out)?;
-                out.push(0x1A); // drop
+        Expr::Perform { effect, op, args } => {
+            if effect == "Mem" && op == "store_str" && args.len() == 2 {
+                // Zero-copy O(1) static string binding: stores word address of `str` into `mem[slot]`!
+                emit_safe_mem_addr_i32(&args[0], ctx, out)?;
+                emit_expr(&args[1], ctx, out)?;
+                out.push(0x3E); // i64.store32
+                out.push(0x02);
+                out.push(0x00);
+                out.push(0x42);
+                push_i64_leb(out, 0);
+            } else {
+                for a in args {
+                    emit_expr(a, ctx, out)?;
+                    out.push(0x1A); // drop
+                }
+                out.push(0x42);
+                push_i64_leb(out, 0);
             }
-            out.push(0x42);
-            push_i64_leb(out, 0);
         }
         Expr::Call { target, args } => {
             for a in args {
