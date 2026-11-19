@@ -53,8 +53,33 @@ pub fn build_strata_wasm_from_module(
     let root_hashes: Vec<String> = export_pairs.iter().map(|(_, h)| h.clone()).collect();
     let nodes = collect_multi_root_subgraph(store, &root_hashes)?;
 
-    // Embed SecurityPassport of primary entrypoint in Wasm custom section `axiom.passport`
-    let passport_bytes = if let Some((alias, _)) = export_pairs.first() {
+    // Embed SecurityPassport in Wasm custom section `axiom.passport`.
+    // For capsule UIs (`step_ui`/`init_app`), merge all exported external capabilities so none can be hidden.
+    let passport_bytes = if let Some((ui_alias, _)) = export_pairs
+        .iter()
+        .find(|(n, _)| n == "step_ui" || n == "init_app")
+    {
+        let mut merged = store.compute_passport(ui_alias)?;
+        let mut seen_effs: std::collections::BTreeSet<String> = merged
+            .capabilities
+            .iter()
+            .map(|c| c.effect.clone())
+            .collect();
+        for (alias, _) in &export_pairs {
+            if let Ok(other) = store.compute_passport(alias) {
+                if other.uses_secret_types {
+                    merged.uses_secret_types = true;
+                }
+                for cap in other.capabilities {
+                    if seen_effs.insert(cap.effect.clone()) {
+                        merged.capabilities.push(cap);
+                    }
+                }
+            }
+        }
+        merged.is_pure = merged.capabilities.is_empty();
+        serde_json::to_vec(&merged).unwrap_or_default()
+    } else if let Some((alias, _)) = export_pairs.first() {
         let p = store.compute_passport(alias)?;
         serde_json::to_vec(&p).unwrap_or_default()
     } else {
@@ -224,27 +249,76 @@ impl StrataStrPool {
     }
 }
 
+fn expr_uses_host_call(expr: &Expr) -> bool {
+    match expr {
+        Expr::Perform { op, args, .. } => {
+            op == "call" || args.iter().any(expr_uses_host_call)
+        }
+        Expr::Call { args, .. } => args.iter().any(expr_uses_host_call),
+        Expr::Binary { lhs, rhs, .. } => expr_uses_host_call(lhs) || expr_uses_host_call(rhs),
+        Expr::Unary { expr: e, .. } => expr_uses_host_call(e),
+        Expr::MemLoad { index } => expr_uses_host_call(index),
+        Expr::MemStore { index, value } => expr_uses_host_call(index) || expr_uses_host_call(value),
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_host_call(cond)
+                || expr_uses_host_call(then_branch)
+                || expr_uses_host_call(else_branch)
+        }
+        Expr::Block { stmts, tail } => {
+            stmts.iter().any(stmt_uses_host_call) || expr_uses_host_call(tail)
+        }
+        _ => false,
+    }
+}
+
+fn stmt_uses_host_call(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_host_call(value),
+        Stmt::Expr(e) => expr_uses_host_call(e),
+        Stmt::While { cond, body, .. } => {
+            expr_uses_host_call(cond) || body.iter().any(stmt_uses_host_call)
+        }
+    }
+}
+
 fn emit_strata_wasm_bytes(
     nodes: &[CanonicalNode],
     exports: &[(String, String)],
     passport_json: &[u8],
 ) -> Result<Vec<u8>, AxiomDiagnostic> {
+    let uses_host_call = nodes.iter().any(|n| expr_uses_host_call(&n.ast.body));
+    let import_offset: u32 = if uses_host_call { 1 } else { 0 };
+
     let mut hash_to_func_idx: BTreeMap<String, u32> = BTreeMap::new();
     for (idx, node) in nodes.iter().enumerate() {
-        hash_to_func_idx.insert(node.hash.clone(), idx as u32);
+        hash_to_func_idx.insert(node.hash.clone(), import_offset + idx as u32);
     }
 
-    // Internal functions `0 .. nodes.len()-1` all use uniform i64 ABI: (i64 * arity) -> i64.
-    // For each exported function, we ALSO emit a JS-ergonomic i32-marshaled wrapper if desired,
-    // OR export both `<name>` (i32 params -> i32 return for zero-BigInt JS canvas loops!)
-    // and `<name>_i64` (full 64-bit ABI)!
-    // WAIT: Exporting `<name>` with `(i32 * arity) -> i32` (sign-extending i32 args to i64 and wrapping i64 result to i32)
-    // lets 60-120 FPS browser games call `wasm.tick(keys, mx, my)` directly with plain JS numbers (zero BigInt GC overhead!),
-    // while `<name>_i64` provides full 64-bit access!
     let internal_count = nodes.len() as u32;
 
     let mut type_entries: Vec<Vec<u8>> = Vec::new();
     let mut func_type_indices: Vec<u32> = Vec::new();
+
+    // 0. Optional imported capability bridge `env.host_call(i64, i64, i64, i64) -> i64`
+    let host_call_type_idx = if uses_host_call {
+        let sig = vec![
+            0x60,
+            4,
+            WASM_TYPE_I64,
+            WASM_TYPE_I64,
+            WASM_TYPE_I64,
+            WASM_TYPE_I64,
+            1,
+            WASM_TYPE_I64,
+        ];
+        Some(intern_sig(&mut type_entries, sig))
+    } else {
+        None
+    };
 
     // 1. Internal functions (uniform i64 -> i64)
     for node in nodes {
@@ -272,7 +346,7 @@ fn emit_strata_wasm_bytes(
                 "Ensure exported node is ingested",
             )
         })?;
-        let target_node = &nodes[target_idx as usize];
+        let target_node = &nodes[(target_idx - import_offset) as usize];
         let arity = target_node.ast.params.len();
         let is_unit = target_node.ast.ret_type == Type::Unit;
 
@@ -288,10 +362,8 @@ fn emit_strata_wasm_bytes(
         }
 
         let tidx = intern_sig(&mut type_entries, sig);
-        let wrapper_func_idx = internal_count + wrapper_specs.len() as u32;
         func_type_indices.push(tidx);
         wrapper_specs.push((exp_name.clone(), target_idx, arity, is_unit));
-        let _ = wrapper_func_idx;
     }
 
     let mut wasm = Vec::with_capacity(4096);
@@ -305,6 +377,17 @@ fn emit_strata_wasm_bytes(
         sec_type.extend_from_slice(sig);
     }
     push_section(&mut wasm, 1, &sec_type);
+
+    // Section 2: Import section (only emitted when capsule uses `do <Effect>.call(...)`)
+    if let Some(hc_tidx) = host_call_type_idx {
+        let mut sec_imp = Vec::new();
+        push_u32_leb(&mut sec_imp, 1);
+        push_wasm_str(&mut sec_imp, "env");
+        push_wasm_str(&mut sec_imp, "host_call");
+        sec_imp.push(0x00); // func import
+        push_u32_leb(&mut sec_imp, hc_tidx);
+        push_section(&mut wasm, 2, &sec_imp);
+    }
 
     // Section 3: Function section
     let mut sec_func = Vec::new();
@@ -332,7 +415,7 @@ fn emit_strata_wasm_bytes(
     push_u32_leb(&mut sec_exp, 0);
 
     for (i, (exp_name, target_idx, _, _)) in wrapper_specs.iter().enumerate() {
-        let wrapper_idx = internal_count + i as u32;
+        let wrapper_idx = import_offset + internal_count + i as u32;
         push_wasm_str(&mut sec_exp, exp_name);
         sec_exp.push(0x00); // func export
         push_u32_leb(&mut sec_exp, wrapper_idx);
@@ -350,8 +433,12 @@ fn emit_strata_wasm_bytes(
     push_u32_leb(&mut sec_code, func_type_indices.len() as u32);
 
     for (self_idx, node) in nodes.iter().enumerate() {
-        let body_bytes =
-            compile_node_body(node, self_idx as u32, &hash_to_func_idx, &mut str_pool)?;
+        let body_bytes = compile_node_body(
+            node,
+            import_offset + self_idx as u32,
+            &hash_to_func_idx,
+            &mut str_pool,
+        )?;
         push_u32_leb(&mut sec_code, body_bytes.len() as u32);
         sec_code.extend_from_slice(&body_bytes);
     }
@@ -777,6 +864,26 @@ fn emit_expr(
                 out.push(0x02);
                 out.push(0x00);
                 out.push(0x42);
+                push_i64_leb(out, 0);
+            } else if op == "call" {
+                // Capability Host ABI: `do <Effect>.call(op_id, a0, a1, a2)` -> `env.host_call`
+                // Stores the i64 host return code in `mem[62]` (byte offset 248).
+                out.push(0x41); // i32.const 248
+                push_i32_leb(out, 248);
+                for i in 0..4 {
+                    if let Some(a) = args.get(i) {
+                        emit_expr(a, ctx, out)?;
+                    } else {
+                        out.push(0x42);
+                        push_i64_leb(out, 0);
+                    }
+                }
+                out.push(0x10); // call 0 (`env.host_call`)
+                push_u32_leb(out, 0);
+                out.push(0x3E); // i64.store32 into mem[62]
+                out.push(0x02);
+                out.push(0x00);
+                out.push(0x42); // push unit 0_i64
                 push_i64_leb(out, 0);
             } else {
                 for a in args {
