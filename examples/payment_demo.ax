@@ -1,0 +1,37 @@
+// Пример Спринта 1: Семантическая дедупликация, контракты Telos и Паспорт прав
+
+// Агент №1 написал расчёт комиссии со своими именами переменных:
+fn calc_fee_agent_a(amount: i64, rate_bps: i64) -> i64
+  req amount >= 0 && rate_bps >= 0
+  ens result >= 0
+{
+  let raw = amount * rate_bps;
+  raw / 10000
+}
+
+// Агент №2 независимо написал ту же самую математику другими словами и пробелами:
+fn compute_commission_agent_b(   sum : i64 ,   bps : i64 ) -> i64
+  req sum >= 0 && bps >= 0
+  ens result >= 0
+{
+  let product = sum * bps;
+  product / 10000
+}
+
+// Листовой узел с явным правом выхода только на конкретный домен и аудита:
+fn send_bank_wire(token: Secret<str>, net_amount: i64) -[Net("api.mybank.com"), Audit]-> bool
+  req net_amount > 0
+{
+  do Audit.record(net_amount);
+  do Net.post(reveal("api.mybank.com", token), net_amount);
+  true
+}
+
+// Верхнеуровневый сценарий оплаты (вызывает функции по смыслу, порядок объявления не важен):
+fn checkout(auth_token: Secret<str>, total: i64) -> bool
+  req total > 100
+{
+  let fee = calc_fee_agent_a(total, 250);
+  let net = total - fee;
+  send_bank_wire(auth_token, net)
+}
