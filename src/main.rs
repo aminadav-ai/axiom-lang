@@ -3,6 +3,7 @@
 use axiom_lang::codegen::{build_native_binary, run_native_binary};
 use axiom_lang::diag::{AxiomDiagnostic, Span};
 use axiom_lang::parser::parse_module;
+use axiom_lang::showcase::{build_showcase_assets, serve_showcase_http};
 use axiom_lang::store::GraphStore;
 use axiom_lang::wasm::{build_wasm_module, WasmArtifact};
 use std::env;
@@ -272,6 +273,34 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
                 }
             }
             Ok(())
+        }
+        ["build-showcase"] => {
+            let out_dir = cwd.join("showcase");
+            let bundle = build_showcase_assets(&cwd, &out_dir)?;
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&bundle).unwrap_or_default()
+                );
+            } else {
+                println!(
+                    "  Showcase assets built in {} (checkout.wasm = {:.1} KB, {} verified nodes)",
+                    out_dir.display(),
+                    bundle.wasm_size_bytes as f64 / 1024.0,
+                    bundle.ingested_nodes.len()
+                );
+            }
+            Ok(())
+        }
+        ["serve-showcase"] => {
+            let out_dir = cwd.join("showcase");
+            let _ = build_showcase_assets(&cwd, &out_dir)?;
+            serve_showcase_http(&out_dir, "127.0.0.1:8787")
+        }
+        ["serve-showcase", bind_addr] => {
+            let out_dir = cwd.join("showcase");
+            let _ = build_showcase_assets(&cwd, &out_dir)?;
+            serve_showcase_http(&out_dir, bind_addr)
         }
         ["rename", old_alias, new_alias] => {
             let mut store = GraphStore::open(&cwd)?;

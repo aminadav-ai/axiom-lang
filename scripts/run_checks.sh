@@ -18,40 +18,44 @@ fi
 LOG_FILE="logs/check_${TIMESTAMP}.log"
 
 {
-  echo "=== AXIOM-LANG VERIFICATION SUITE (${TIMESTAMP}) ==="
+  echo "=== AXIOM-LANG FULL STAGE 1 VERIFICATION SUITE (${TIMESTAMP}) ==="
   rustc --version
   cargo --version
   z3 --version
 
   echo ""
-  echo "--- [1/7] Strict Clippy Check (no todo!, no unimplemented!, no dead_code) ---"
+  echo "--- [1/8] Strict Clippy Check (no todo!, no unimplemented!, no dead_code) ---"
   cargo clippy --all-targets -- -D warnings
 
   echo ""
-  echo "--- [2/7] Full Automated Test Suite (Sprints 1..5, including V8 Wasm Time-Travel) ---"
+  echo "--- [2/8] Full Automated Test Suite (Sprints 1..6) ---"
   cargo test -- --nocapture
 
   echo ""
-  echo "--- [3/7] End-to-End Verified Graph Ingestion & Security Passport (examples/payment_demo.ax) ---"
+  echo "--- [3/8] End-to-End Verified Graph Ingestion & Security Passport (examples/payment_demo.ax) ---"
   rm -rf .axiom
   cargo run --quiet -- ingest examples/payment_demo.ax
   echo ""
   cargo run --quiet -- passport checkout
 
   echo ""
-  echo "--- [4/7] Native Binary Build, Hash Cache Hit, & Traced Execution ---"
+  echo "--- [4/8] Native Binary Build, Hash Cache Hit, & Traced Execution ---"
   cargo run --quiet -- build checkout
   cargo run --quiet -- build checkout
   cargo run --quiet -- run checkout "sk_live_secret_token_999" 10000 --trace
 
   echo ""
-  echo "--- [5/7] WebAssembly (.wasm) Build & Content-Addressed Cache Hit ---"
+  echo "--- [5/8] WebAssembly (.wasm) Build & Content-Addressed Cache Hit ---"
   cargo run --quiet -- build-wasm checkout
   cargo run --quiet -- build-wasm checkout
   rm -rf .axiom
 
   echo ""
-  echo "--- [6/7] Anti-Stub Z3 Rejection Demo (examples/anti_stub_demo.ax) ---"
+  echo "--- [6/8] Build Interactive WebAssembly Showcase Bundle (showcase/) ---"
+  cargo run --quiet -- build-showcase
+
+  echo ""
+  echo "--- [7/8] Anti-Stub Z3 Rejection Demo (examples/anti_stub_demo.ax) ---"
   if cargo run --quiet -- verify examples/anti_stub_demo.ax; then
     echo "ERROR: anti_stub_demo.ax should have been rejected by Z3!"
     exit 1
@@ -60,7 +64,7 @@ LOG_FILE="logs/check_${TIMESTAMP}.log"
   fi
 
   echo ""
-  echo "--- [7/7] Secret Exfiltration Taint-Block Demo (examples/secret_leak_demo.ax) ---"
+  echo "--- [8/8] Secret Exfiltration Taint-Block Demo (examples/secret_leak_demo.ax) ---"
   if cargo run --quiet -- verify examples/secret_leak_demo.ax; then
     echo "ERROR: secret_leak_demo.ax should have been blocked by taint checker!"
     exit 1
@@ -69,7 +73,7 @@ LOG_FILE="logs/check_${TIMESTAMP}.log"
   fi
 
   echo ""
-  echo "=== ALL CHECKS PASSED ==="
+  echo "=== ALL STAGE 1 CHECKS PASSED ==="
 } 2>&1 | tee "$LOG_FILE"
 
 cp "$LOG_FILE" "logs/latest.log"

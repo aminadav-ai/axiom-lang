@@ -1,0 +1,28 @@
+name: Axiom CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Z3 SMT solver
+        run: sudo apt-get update && sudo apt-get install -y z3
+
+      - name: Install Rust toolchain & wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Run full Axiom verification & test suite
+        run: ./scripts/run_checks.sh
+
+      - name: Build static WebAssembly showcase
+        run: cargo run -- build-showcase
