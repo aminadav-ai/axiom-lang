@@ -4,6 +4,7 @@
 [![Deploy Showcase](https://github.com/aminadav-ai/axiom-lang/actions/workflows/pages.yml/badge.svg)](https://aminadav-ai.github.io/axiom-lang/)
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
+> **Official Axiom Ecosystem Website & Live Launcher:** **[https://axiom-lang.org](https://axiom-lang.org)**  
 > **Live Interactive Compiler & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**  
 > **Stage 2 — Zero-DOM Hardware GPU UI Engine (`15.34 KB` Wasm, `1` Draw Call):** **[Axiom-UI v1.0 Gallery](https://aminadav-ai.github.io/axiom-ui/)** ([Repo](https://github.com/aminadav-ai/axiom-ui))  
 > **Stage 2 — 1,000,000-Cell Hardware GPU Spreadsheet (`21.65 KB` Wasm):** **[Axiom Grid v1.0](https://aminadav-ai.github.io/axiom-grid/)** ([Repo](https://github.com/aminadav-ai/axiom-grid))  
