@@ -5,8 +5,9 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 > **Live Interactive Compiler & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**  
-> **Live 2.5D Game in `10.88 KB` Pure Axiom Wasm:** **[Axiom Lion Herd](https://aminadav-ai.github.io/axiom-lion-herd/)** ([Repo](https://github.com/aminadav-ai/axiom-lion-herd))  
-> **Live Classic Puzzle in `7.60 KB` Pure Axiom Wasm:** **[Axiom Color Lines 98](https://aminadav-ai.github.io/axiom-color-lines/)** ([Repo](https://github.com/aminadav-ai/axiom-color-lines))
+> **Live 1996-Style 3D Shooter in `17.40 KB` Pure Axiom Wasm:** **[Axiom Slipgate](https://aminadav-ai.github.io/axiom-slipgate/)** ([Repo](https://github.com/aminadav-ai/axiom-slipgate))  
+> **Live HD 2.5D Isometric Game in `15.03 KB` Pure Axiom Wasm:** **[Axiom Lion Herd HD](https://aminadav-ai.github.io/axiom-lion-herd/)** ([Repo](https://github.com/aminadav-ai/axiom-lion-herd))  
+> **Live HD 3D Glass Puzzle in `11.50 KB` Pure Axiom Wasm:** **[Axiom Color Lines 98 HD](https://aminadav-ai.github.io/axiom-color-lines/)** ([Repo](https://github.com/aminadav-ai/axiom-color-lines))
 
 **Axiom** is an AI-native programming language stack built for a world where autonomous AI agents write the software and humans verify **intent, mathematical guarantees, and capability boundaries** rather than auditing 50,000 lines of source text.
 
@@ -14,15 +15,16 @@
 
 ## Games & Interactive Demos Built in 100% Axiom (`v0.2`)
 
-Both complete browser games below are written **100% in Axiom** (`Telos` Z3 contracts + `Flux` content-addressed graph + `Strata` linear-memory physics, software 2.5D/3D rasterizers, and Time-Travel ring buffers) and compiled **directly to standalone W3C WebAssembly bytecode with ZERO `rustc`, ZERO `wasm-bindgen`, and ZERO game-engine runtime**:
+All three complete browser games below are written **100% in Axiom** (`Telos` Z3 contracts + `Flux` content-addressed graph + `Strata` linear-memory physics, HD software 2.5D/3D rasterizers, procedural Web Audio triggers, and Time-Travel ring buffers) and compiled **directly to standalone W3C WebAssembly bytecode with ZERO `rustc`, ZERO `wasm-bindgen`, and ZERO game-engine runtime**:
 
-| Project | Play Live | Source | `.wasm` Binary | Gzipped Wire Size | Z3 Proofs Proved | Direct Build Speed | Software FPS (V8) |
+| Project | Play Live | Source | `.wasm` Binary | Gzipped Wire Size | Z3 Proofs Proved | Resolution & Engine | Software FPS (V8) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Axiom Lion Herd** *(2.5D Isometric Shepherd, Boids AI, Shadows, Time-Travel)* | **[Play Live](https://aminadav-ai.github.io/axiom-lion-herd/)** | [`lion_herd.ax`](https://github.com/aminadav-ai/axiom-lion-herd/blob/main/src/lion_herd.ax) | **`10.88 KB`** *(11,136 B)* | **`4.66 KB`** | **90 / 90** | **~108 ms** *(cached graph)* | **~145 FPS** *(`640x400` RGBA)* |
-| **Axiom Color Lines 98** *(9x9 BFS Pathfinding, 4-Axis Combos, 3D Specular Spheres, Turn Scrubbing)* | **[Play Live](https://aminadav-ai.github.io/axiom-color-lines/)** | [`color_lines.ax`](https://github.com/aminadav-ai/axiom-color-lines/blob/main/src/color_lines.ax) | **`7.60 KB`** *(7,779 B)* | **`3.08 KB`** | **29 / 29** | **1.14 s** *(cold w/ Z3)* | **~191 FPS** *(`468x520` RGBA)* |
-| **Axiom Payment & Taint Inspector** *(Secret\<T\> Redaction, Security Passport, Flight Recorder)* | **[Open Demo](https://aminadav-ai.github.io/axiom-lang/)** | [`payment_demo.ax`](examples/payment_demo.ax) | **`32.3 KB`** | **`~11.4 KB`** | **8 / 8** | **3 ms** *(hash cache)* | Interactive |
+| **Axiom Slipgate** *(1996-Style Dark-Industrial 3D FPS, 8 Procedural `64×64` Textures, Acid Slime, Boomstick, Combat Rewind)* | **[Play Live](https://aminadav-ai.github.io/axiom-slipgate/)** | [`slipgate.ax`](https://github.com/aminadav-ai/axiom-slipgate/blob/main/src/slipgate.ax) | **`17.40 KB`** *(17,817 B)* | **`7.10 KB`** | **155 / 155** | **`720×450`** Textured 3D DDA + Floor/Sky | **~89 FPS** |
+| **Axiom Lion Herd HD** *(Sculpted 2.5D Lions & Woolly Sheep, Boids AI, Timber Corral Rails, Audio, Time-Travel)* | **[Play Live](https://aminadav-ai.github.io/axiom-lion-herd/)** | [`lion_herd.ax`](https://github.com/aminadav-ai/axiom-lion-herd/blob/main/src/lion_herd.ax) | **`15.03 KB`** *(15,387 B)* | **`6.31 KB`** | **90+ Proved** | **`880×520`** `isqrt` Sculpted 2.5D | **~86 FPS** |
+| **Axiom Color Lines 98 HD** *(True-3D Phong/Caustic Glass Jewels, Animated Tile-by-Tile Path Hopping, Audio, Turn Scrubbing)* | **[Play Live](https://aminadav-ai.github.io/axiom-color-lines/)** | [`color_lines.ax`](https://github.com/aminadav-ai/axiom-color-lines/blob/main/src/color_lines.ax) | **`11.50 KB`** *(11,771 B)* | **`4.51 KB`** | **30+ Proved** | **`684×760`** Phong `(N·H)^16` + AA | **60+ FPS** |
+| **Axiom Payment & Taint Inspector** *(Secret\<T\> Redaction, Security Passport, Flight Recorder)* | **[Open Demo](https://aminadav-ai.github.io/axiom-lang/)** | [`payment_demo.ax`](examples/payment_demo.ax) | **`32.3 KB`** | **`~11.4 KB`** | **8 / 8** | Interactive Inspector | Interactive |
 
-> **Universal Cross-Repository Deduplication in Action:** Although [`axiom-lion-herd`](https://github.com/aminadav-ai/axiom-lion-herd) and [`axiom-color-lines`](https://github.com/aminadav-ai/axiom-color-lines) live in separate repositories with zero shared imports or packages, shared pure kernels (`clamp_byte` -> `#3ab09c0f9b38`, `pack_rgba` -> `#89767d82293f`, `get_fb_byte_offset` -> `#7b90658f2414`) automatically converge to the **exact same 256-bit semantic hashes**.
+> **Universal Cross-Repository Deduplication in Action:** Although [`axiom-slipgate`](https://github.com/aminadav-ai/axiom-slipgate), [`axiom-lion-herd`](https://github.com/aminadav-ai/axiom-lion-herd), and [`axiom-color-lines`](https://github.com/aminadav-ai/axiom-color-lines) live in three separate repositories with zero shared imports or packages, shared pure kernels (`clamp_byte` -> `#3ab09c0f9b38`, `abs_val` -> `#5f2b18594c39`, `pack_rgba` -> `#89767d82293f`) automatically converge to the **exact same 256-bit semantic hashes**.
 
 ---
 
