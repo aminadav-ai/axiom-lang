@@ -206,10 +206,10 @@ impl StrataStrPool {
             return addr;
         }
         let word_addr = (STRATA_STR_WORD_BASE as usize + self.words.len()) as i64;
-        let bytes = s.as_bytes();
-        self.words.push(bytes.len() as i32);
-        for &b in bytes {
-            self.words.push(b as i32);
+        let chars: Vec<char> = s.chars().collect();
+        self.words.push(chars.len() as i32);
+        for ch in chars {
+            self.words.push(ch as u32 as i32);
         }
         self.map.insert(s.to_string(), word_addr);
         word_addr

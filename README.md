@@ -5,6 +5,7 @@
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 > **Official Axiom Ecosystem Website & Live Launcher:** **[https://axiom-lang.org](https://axiom-lang.org)**  
+> **Stages 3 & 4 — Hybrid AI-First IDE & Shell (`2.54 MB` Daemon + `11.68 KB` Cyrillic/EN GPU Wasm):** **[Axiom Studio v1.0](https://axiom-lang.org/axiom-studio/)** ([Repo](https://github.com/aminadav-ai/axiom-studio))  
 > **Live Interactive Compiler & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**  
 > **Stage 2 — Zero-DOM Hardware GPU UI Engine (`15.34 KB` Wasm, `1` Draw Call):** **[Axiom-UI v1.0 Gallery](https://aminadav-ai.github.io/axiom-ui/)** ([Repo](https://github.com/aminadav-ai/axiom-ui))  
 > **Stage 2 — 1,000,000-Cell Hardware GPU Spreadsheet (`21.65 KB` Wasm):** **[Axiom Grid v1.0](https://aminadav-ai.github.io/axiom-grid/)** ([Repo](https://github.com/aminadav-ai/axiom-grid))  
@@ -128,8 +129,7 @@ cargo run -- run checkout "sk_live_secret_token" 10000 --trace
 
 1. **`axiom-lang` (Completed — `v0.1` & `v0.2`):** Content-addressed semantic graph, Z3 anti-stub contract prover, `Secret<T>` taint pipes, native `Axiom.Strata` zero-`rustc` `.wasm` (with static zero-copy string pool) & `x86_64` ELF64 emitters, and Time-Travel execution.
 2. **`axiom-ui` (Completed — Stage 2):** Unified 1-Draw-Call WebGL2 SDF & HiDPI Font-Atlas GPU UI engine replacing Electron/HTML/CSS stacks, demonstrated via [`axiom-ui`](https://github.com/aminadav-ai/axiom-ui), [`axiom-grid`](https://github.com/aminadav-ai/axiom-grid) (1M cells), [`axiom-workspace`](https://github.com/aminadav-ai/axiom-workspace) (Multi-Window Desktop OS), and [`axiom-capsule-browser`](https://github.com/aminadav-ai/axiom-capsule-browser).
-3. **`axiom-shell` (Stage 3):** Natural-language OS shell translating human intent into Z3-verified capability graphs.
-4. **`axiom-studio` (Stage 4):** Native multi-agent graph IDE written in Axiom (conflict-free parallel node editing).
+3. **`axiom-shell` & `axiom-studio` (Completed — Stages 3 & 4):** Ultra-lightweight native Hybrid AI IDE (`2.54 MB` Rust daemon + `11.68 KB` multilingual Latin/Cyrillic/`₪` WebGL2 DAG engine) with integrated `axiom-shell`, 1-click Antigravity session migration, and 3-mode AI (`Google One Ultra Bridge`, `Gemini 4 Carbon API`, `Ollama Offline`) in [`aminadav-ai/axiom-studio`](https://github.com/aminadav-ai/axiom-studio).
 5. **`axiom-web` (Stage 5):** Native player for Axiom web capsules with local sandboxed sanitization.
 6. **`axiom-zero` (Stage 6):** Full compiler self-hosting on `Axiom.Strata`.
 7. **`axiom-os` (Stage 7):** Bootable minimal live-USB environment running the Axiom stack directly on hardware.
