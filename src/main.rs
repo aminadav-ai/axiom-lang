@@ -4,6 +4,7 @@ use axiom_lang::codegen::{build_native_binary, run_native_binary};
 use axiom_lang::diag::{AxiomDiagnostic, Span};
 use axiom_lang::parser::parse_module;
 use axiom_lang::store::GraphStore;
+use axiom_lang::wasm::{build_wasm_module, WasmArtifact};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -112,6 +113,19 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             let store = GraphStore::open(&cwd)?;
             let art = build_native_binary(&store, &cwd, target, Some(Path::new(out_path)))?;
             print_build_artifact(&art, json_mode);
+            Ok(())
+        }
+        ["build", target, "--target", "wasm"] | ["build-wasm", target] => {
+            let store = GraphStore::open(&cwd)?;
+            let art = build_wasm_module(&store, &cwd, target, None)?;
+            print_wasm_artifact(&art, json_mode);
+            Ok(())
+        }
+        ["build", target, "--target", "wasm", "-o", out_path]
+        | ["build-wasm", target, "-o", out_path] => {
+            let store = GraphStore::open(&cwd)?;
+            let art = build_wasm_module(&store, &cwd, target, Some(Path::new(out_path)))?;
+            print_wasm_artifact(&art, json_mode);
             Ok(())
         }
         ["run", target, rest @ ..] => {
@@ -300,6 +314,28 @@ fn print_build_artifact(art: &axiom_lang::codegen::BuildArtifact, json_mode: boo
             art.binary_path,
             art.compiled_nodes,
             art.binary_size_bytes / 1024,
+            hit,
+            art.build_ms
+        );
+    }
+}
+
+fn print_wasm_artifact(art: &WasmArtifact, json_mode: bool) {
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(art).unwrap_or_default());
+    } else {
+        let hit = if art.cache_hit {
+            "cache-hit"
+        } else {
+            "compiled wasm32 -Oz"
+        };
+        println!(
+            "  Built Wasm #{} ({}) -> {} [{} node(s), {:.1} KB, {} in {}ms]",
+            art.short_hash,
+            art.entry_alias_or_ref,
+            art.wasm_path,
+            art.compiled_nodes,
+            art.wasm_size_bytes as f64 / 1024.0,
             hit,
             art.build_ms
         );

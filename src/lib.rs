@@ -9,3 +9,4 @@ pub mod parser;
 pub mod store;
 pub mod typecheck;
 pub mod verify;
+pub mod wasm;
