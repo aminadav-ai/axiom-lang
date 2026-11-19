@@ -1,11 +1,12 @@
 #![deny(clippy::todo, clippy::unimplemented, dead_code, unused_must_use)]
 
+use axiom_lang::codegen::{build_native_binary, run_native_binary};
 use axiom_lang::diag::{AxiomDiagnostic, Span};
 use axiom_lang::parser::parse_module;
 use axiom_lang::store::GraphStore;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -97,6 +98,48 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
                         item.verify_ms,
                         storage_tag
                     );
+                }
+            }
+            Ok(())
+        }
+        ["build", target] => {
+            let store = GraphStore::open(&cwd)?;
+            let art = build_native_binary(&store, &cwd, target, None)?;
+            print_build_artifact(&art, json_mode);
+            Ok(())
+        }
+        ["build", target, "-o", out_path] => {
+            let store = GraphStore::open(&cwd)?;
+            let art = build_native_binary(&store, &cwd, target, Some(Path::new(out_path)))?;
+            print_build_artifact(&art, json_mode);
+            Ok(())
+        }
+        ["run", target, rest @ ..] => {
+            let store = GraphStore::open(&cwd)?;
+            let outcome = run_native_binary(&store, &cwd, target, rest)?;
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outcome).unwrap_or_default()
+                );
+            } else {
+                if !outcome.stdout.is_empty() {
+                    print!("{}", outcome.stdout);
+                }
+                if !outcome.stderr.is_empty() {
+                    eprint!("{}", outcome.stderr);
+                }
+                if outcome.exit_code != 0 {
+                    return Err(AxiomDiagnostic::new(
+                        "E074_RUNTIME_REJECTED",
+                        "runtime",
+                        format!(
+                            "Node '{}' exited with status {}",
+                            target, outcome.exit_code
+                        ),
+                        Span::zero(),
+                        "Ensure CLI arguments match parameter types and satisfy root 'req' preconditions",
+                    ));
                 }
             }
             Ok(())
@@ -236,7 +279,29 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             "cli",
             "Invalid CLI arguments",
             Span::zero(),
-            "Usage: axiom <verify <file.ax> | ingest <file.ax> | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
+            "Usage: axiom <verify <f.ax> | ingest <f.ax> | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
         )),
+    }
+}
+
+fn print_build_artifact(art: &axiom_lang::codegen::BuildArtifact, json_mode: bool) {
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(art).unwrap_or_default());
+    } else {
+        let hit = if art.cache_hit {
+            "cache-hit"
+        } else {
+            "compiled -O native"
+        };
+        println!(
+            "  Built #{} ({}) -> {} [{} node(s), {} KB, {} in {}ms]",
+            art.short_hash,
+            art.entry_alias_or_ref,
+            art.binary_path,
+            art.compiled_nodes,
+            art.binary_size_bytes / 1024,
+            hit,
+            art.build_ms
+        );
     }
 }

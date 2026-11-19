@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod canon;
+pub mod codegen;
 pub mod diag;
 pub mod lexer;
 pub mod parser;

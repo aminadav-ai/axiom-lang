@@ -24,25 +24,29 @@ LOG_FILE="logs/check_${TIMESTAMP}.log"
   z3 --version
 
   echo ""
-  echo "--- [1/5] Strict Clippy Check (no todo!, no unimplemented!, no dead_code) ---"
+  echo "--- [1/6] Strict Clippy Check (no todo!, no unimplemented!, no dead_code) ---"
   cargo clippy --all-targets -- -D warnings
 
   echo ""
-  echo "--- [2/5] Unit, Z3 Proof, & Security Taint Test Suite ---"
+  echo "--- [2/6] Full Automated Test Suite (Sprints 1..4) ---"
   cargo test -- --nocapture
 
   echo ""
-  echo "--- [3/5] End-to-End Verified Graph Ingestion & Security Passport (examples/payment_demo.ax) ---"
+  echo "--- [3/6] End-to-End Verified Graph Ingestion & Security Passport (examples/payment_demo.ax) ---"
   rm -rf .axiom
   cargo run --quiet -- ingest examples/payment_demo.ax
   echo ""
-  cargo run --quiet -- graph
-  echo ""
   cargo run --quiet -- passport checkout
+
+  echo ""
+  echo "--- [4/6] Native Binary Build, Hash Cache Hit, & Traced Execution ---"
+  cargo run --quiet -- build checkout
+  cargo run --quiet -- build checkout
+  cargo run --quiet -- run checkout "sk_live_secret_token_999" 10000 --trace
   rm -rf .axiom
 
   echo ""
-  echo "--- [4/5] Anti-Stub Z3 Rejection Demo (examples/anti_stub_demo.ax) ---"
+  echo "--- [5/6] Anti-Stub Z3 Rejection Demo (examples/anti_stub_demo.ax) ---"
   if cargo run --quiet -- verify examples/anti_stub_demo.ax; then
     echo "ERROR: anti_stub_demo.ax should have been rejected by Z3!"
     exit 1
@@ -51,7 +55,7 @@ LOG_FILE="logs/check_${TIMESTAMP}.log"
   fi
 
   echo ""
-  echo "--- [5/5] Secret Exfiltration Taint-Block Demo (examples/secret_leak_demo.ax) ---"
+  echo "--- [6/6] Secret Exfiltration Taint-Block Demo (examples/secret_leak_demo.ax) ---"
   if cargo run --quiet -- verify examples/secret_leak_demo.ax; then
     echo "ERROR: secret_leak_demo.ax should have been blocked by taint checker!"
     exit 1
