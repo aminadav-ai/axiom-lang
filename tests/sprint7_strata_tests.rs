@@ -55,6 +55,13 @@ fn test_direct_strata_wasm_zero_rustc_framebuffer_and_passport() {
           4096
         }
 
+        // Regression test for negative JS i32 -> Wasm i64 sign-extension (`-1`, `-12`)!
+        export fn step_signed(dx: i64, dy: i64) -> i64
+          ens result == dx * 100 + dy
+        {
+          dx * 100 + dy
+        }
+
         fn pack_rgba(r: i64, g: i64, b: i64) -> i64 {
           0xFF000000 | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255)
         }
@@ -89,7 +96,11 @@ fn test_direct_strata_wasm_zero_rustc_framebuffer_and_passport() {
     );
     assert_eq!(
         art.exported_functions,
-        vec!["get_magic_offset".to_string(), "render_strip".to_string()]
+        vec![
+            "get_magic_offset".to_string(),
+            "step_signed".to_string(),
+            "render_strip".to_string()
+        ]
     );
 
     if let Some(node_bin) = find_node_bin() {
@@ -105,11 +116,14 @@ const mod = await WebAssembly.compile(bytes);
 const sections = WebAssembly.Module.customSections(mod, 'axiom.passport');
 assert.equal(sections.length, 1);
 const passport = JSON.parse(new TextDecoder().decode(sections[0]));
+assert.equal(passport.is_pure, true);
 
-// 2. Instantiate & invoke JS-friendly i32 exports directly (zero BigInt needed!)
+// 2. Instantiate & invoke JS-friendly i32 exports directly, including negative i32 args!
 const inst = await WebAssembly.instantiate(mod, {});
 const exp = inst.exports;
 assert.equal(exp.get_magic_offset(), 4096);
+assert.equal(exp.step_signed(-1, -12), -112);
+assert.equal(exp.step_signed(-1, 1), -99);
 exp.render_strip(10, 300); // 300 clamps to 255!
 
 // 3. Read linear memory framebuffer at word offset 1024 (`byte offset 4096`)

@@ -323,7 +323,7 @@ fn emit_strata_wasm_bytes(
         for p in 0..*arity {
             wbody.push(0x20); // local.get p
             push_u32_leb(&mut wbody, p as u32);
-            wbody.push(0xAD); // i64.extend_i32_s
+            wbody.push(0xAC); // i64.extend_i32_s (MUST sign-extend negative i32 args like -1!)
         }
         wbody.push(0x10); // call target_idx
         push_u32_leb(&mut wbody, *target_idx);
@@ -607,8 +607,8 @@ fn emit_expr(
             }
             UnaryOp::Not => {
                 emit_expr(inner, ctx, out)?;
-                out.push(0x50); // i64.eqz -> i32
-                out.push(0xAC); // i64.extend_i32_u -> i64
+                out.push(0x50); // i64.eqz -> i32 (0 or 1)
+                out.push(0xAD); // i64.extend_i32_u -> i64
             }
         },
         Expr::Binary { op, lhs, rhs } => match op {
