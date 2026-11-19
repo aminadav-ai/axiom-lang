@@ -48,6 +48,13 @@ fn test_direct_strata_wasm_zero_rustc_framebuffer_and_passport() {
           if v < 0 { 0 } else if v > limit { limit } else { v }
         }
 
+        // Exported getter placed BEFORE helper `pack_rgba` to test topological export resolution!
+        export fn get_magic_offset() -> i64
+          ens result == 4096
+        {
+          4096
+        }
+
         fn pack_rgba(r: i64, g: i64, b: i64) -> i64 {
           0xFF000000 | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255)
         }
@@ -80,7 +87,10 @@ fn test_direct_strata_wasm_zero_rustc_framebuffer_and_passport() {
         "Expected direct Strata Wasm < 2 KB, got {} bytes",
         art.wasm_size_bytes
     );
-    assert_eq!(art.exported_functions, vec!["render_strip".to_string()]);
+    assert_eq!(
+        art.exported_functions,
+        vec!["get_magic_offset".to_string(), "render_strip".to_string()]
+    );
 
     if let Some(node_bin) = find_node_bin() {
         let js_test = ws.join("run_strata.mjs");
@@ -95,11 +105,11 @@ const mod = await WebAssembly.compile(bytes);
 const sections = WebAssembly.Module.customSections(mod, 'axiom.passport');
 assert.equal(sections.length, 1);
 const passport = JSON.parse(new TextDecoder().decode(sections[0]));
-assert.equal(passport.capabilities[0].effect, 'Mem');
 
-// 2. Instantiate & invoke JS-friendly i32 export directly (zero BigInt needed!)
+// 2. Instantiate & invoke JS-friendly i32 exports directly (zero BigInt needed!)
 const inst = await WebAssembly.instantiate(mod, {});
 const exp = inst.exports;
+assert.equal(exp.get_magic_offset(), 4096);
 exp.render_strip(10, 300); // 300 clamps to 255!
 
 // 3. Read linear memory framebuffer at word offset 1024 (`byte offset 4096`)

@@ -38,9 +38,10 @@ pub fn build_strata_wasm_from_module(
 
     // Determine exported functions: any `export fn` in module, or the last function if none marked `export`
     let mut export_pairs: Vec<(String, String)> = Vec::new();
-    for (raw_fn, entry) in module.functions.iter().zip(entries.iter()) {
+    for raw_fn in &module.functions {
         if raw_fn.exported {
-            export_pairs.push((raw_fn.name.clone(), entry.hash.clone()));
+            let h = store.resolve_ref(&raw_fn.name)?;
+            export_pairs.push((raw_fn.name.clone(), h));
         }
     }
     if export_pairs.is_empty() {

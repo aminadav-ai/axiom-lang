@@ -1,67 +1,63 @@
-# Axiom (`axiom-lang`)
+# Axiom (`axiom-lang` v0.2)
 
 [![Axiom CI](https://github.com/aminadav-ai/axiom-lang/actions/workflows/ci.yml/badge.svg)](https://github.com/aminadav-ai/axiom-lang/actions/workflows/ci.yml)
 [![Deploy Showcase](https://github.com/aminadav-ai/axiom-lang/actions/workflows/pages.yml/badge.svg)](https://aminadav-ai.github.io/axiom-lang/)
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
-> **Live Interactive Wasm & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**
+> **Live Interactive Compiler & Time-Travel Demo:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**  
+> **Live 2.5D Game in `10.88 KB` Pure Axiom Wasm:** **[Axiom Lion Herd](https://aminadav-ai.github.io/axiom-lion-herd/)** ([Repo](https://github.com/aminadav-ai/axiom-lion-herd))  
+> **Live Classic Puzzle in `7.60 KB` Pure Axiom Wasm:** **[Axiom Color Lines 98](https://aminadav-ai.github.io/axiom-color-lines/)** ([Repo](https://github.com/aminadav-ai/axiom-color-lines))
 
-**Axiom** is an experimental AI-native programming language stack built for a world where autonomous AI agents write the code and humans verify **intent, mathematical guarantees, and capability boundaries** rather than reading 50,000 lines of source text.
+**Axiom** is an AI-native programming language stack built for a world where autonomous AI agents write the software and humans verify **intent, mathematical guarantees, and capability boundaries** rather than auditing 50,000 lines of source text.
+
+---
+
+## Games & Interactive Demos Built in 100% Axiom (`v0.2`)
+
+Both complete browser games below are written **100% in Axiom** (`Telos` Z3 contracts + `Flux` content-addressed graph + `Strata` linear-memory physics, software 2.5D/3D rasterizers, and Time-Travel ring buffers) and compiled **directly to standalone W3C WebAssembly bytecode with ZERO `rustc`, ZERO `wasm-bindgen`, and ZERO game-engine runtime**:
+
+| Project | Play Live | Source | `.wasm` Binary | Gzipped Wire Size | Z3 Proofs Proved | Direct Build Speed | Software FPS (V8) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Axiom Lion Herd** *(2.5D Isometric Shepherd, Boids AI, Shadows, Time-Travel)* | **[Play Live](https://aminadav-ai.github.io/axiom-lion-herd/)** | [`lion_herd.ax`](https://github.com/aminadav-ai/axiom-lion-herd/blob/main/src/lion_herd.ax) | **`10.88 KB`** *(11,136 B)* | **`4.66 KB`** | **90 / 90** | **~108 ms** *(cached graph)* | **~145 FPS** *(`640x400` RGBA)* |
+| **Axiom Color Lines 98** *(9x9 BFS Pathfinding, 4-Axis Combos, 3D Specular Spheres, Turn Scrubbing)* | **[Play Live](https://aminadav-ai.github.io/axiom-color-lines/)** | [`color_lines.ax`](https://github.com/aminadav-ai/axiom-color-lines/blob/main/src/color_lines.ax) | **`7.60 KB`** *(7,779 B)* | **`3.08 KB`** | **29 / 29** | **1.14 s** *(cold w/ Z3)* | **~191 FPS** *(`468x520` RGBA)* |
+| **Axiom Payment & Taint Inspector** *(Secret\<T\> Redaction, Security Passport, Flight Recorder)* | **[Open Demo](https://aminadav-ai.github.io/axiom-lang/)** | [`payment_demo.ax`](examples/payment_demo.ax) | **`32.3 KB`** | **`~11.4 KB`** | **8 / 8** | **3 ms** *(hash cache)* | Interactive |
+
+> **Universal Cross-Repository Deduplication in Action:** Although [`axiom-lion-herd`](https://github.com/aminadav-ai/axiom-lion-herd) and [`axiom-color-lines`](https://github.com/aminadav-ai/axiom-color-lines) live in separate repositories with zero shared imports or packages, shared pure kernels (`clamp_byte` -> `#3ab09c0f9b38`, `pack_rgba` -> `#89767d82293f`, `get_fb_byte_offset` -> `#7b90658f2414`) automatically converge to the **exact same 256-bit semantic hashes**.
 
 ---
 
 ## The Problem: Human Languages Are the Wrong Medium for AI
 
-Every mainstream language (Python, TypeScript, C++, Go, Rust) was shaped around **human cognitive constraints**: typing comfort, named files and folders, indentation/syntax preferences, and dynamic or permissive defaults for fast manual prototyping.
+Every mainstream language (Python, TypeScript, C++, Go, Rust) was shaped around **human cognitive constraints**: typing comfort, named files and folders, indentation preferences, and permissive defaults for manual prototyping.
 
 When AI agents generate software in human-centric languages, three structural failures appear:
-1. **Silent Placeholder Stubs Compile Cleanly:** An agent can write `return Ok(())` or return `balance` unchanged without deducting `amount`, and traditional typecheckers happily accept it because types do not prove postconditions.
+1. **Silent Placeholder Stubs Compile Cleanly:** An agent can write `return Ok(())` or return `balance` unchanged without deducting `amount`, and traditional typecheckers accept it because types do not prove postconditions.
 2. **Hidden Ambient Authority:** Any helper buried 20 imports deep can silently read `~/.ssh` or open an outbound network socket unless a human manually audits the entire dependency tree.
-3. **Context-Window & Dependency Bloat:** File trees, imports, naming collisions, and heavyweight runtime layers burn LLM tokens and system RAM.
+3. **Context-Window & Binary Bloat:** File trees, imports, naming collisions, and megabyte-scale runtime dependencies waste LLM context tokens, compile minutes, and user bandwidth.
 
 ---
 
-## What Is Project Axiom? The 3-Language Stack
+## What Is Project Axiom? All 3 Layers Live in `v0.2`
 
-Instead of dozens of overlapping languages for scripts, backends, frontends, and configs, **Project Axiom** collapses computing into **three orthogonal layers** separated by the physics of computation:
+Instead of dozens of overlapping languages for scripts, backends, frontends, and shaders, **Project Axiom** unifies software into **three orthogonal layers** separated by the physics of computation:
 
-| Layer | Role | Status in `v0.1` (Stage 1) |
+| Layer | Role | Status in `v0.2` |
 | :--- | :--- | :--- |
-| **`Axiom.Telos`** | **Intent, Contracts & Proofs.** Preconditions (`req`), postconditions (`ens`), and security boundaries proved mechanically via the **Z3 SMT solver** at compile time. | **Implemented** (`req`/`ens`, Z3 prover, vacuous-contract & counterexample engine) |
-| **`Axiom.Flux`** | **Content-Addressed Logic & Effect Graph.** Zero files, zero imports. Every function is normalized (De Bruijn positional variables) and addressed by its 256-bit `BLAKE3` semantic hash (`#768a631876e7`), with explicit capability arrows `-[Net("..."), Audit]->` and opaque `Secret<T>` taint pipes. | **Implemented** (`.axiom/` graph store, semantic deduplication, static taint & passport analyzer) |
-| **`Axiom.Strata`** | **Deterministic Silicon & Linear Memory.** Zero-overhead native machine & GPU execution without garbage-collector bloat or undefined behavior. | **Bootstrapped on Rust** (`rustc -O -C target-cpu=native` & `wasm32-unknown-unknown`) |
+| **`Axiom.Telos`** | **Intent, Contracts & Proofs.** Preconditions (`req`), postconditions (`ens`), non-zero divisor obligations, and vacuous-contract guards proved mechanically via **Microsoft Z3** at compile time. | **Implemented Natively** (`src/verify.rs`) |
+| **`Axiom.Flux`** | **Content-Addressed Logic & Effect Graph.** Zero files, zero imports. Every function is normalized (De Bruijn positional variables) and addressed by its 256-bit `SHA-256` semantic hash (`#768a631876e7`), with explicit capability arrows `-[Net("..."), Audit, Mem]->` and opaque `Secret<T>` taint pipes. | **Implemented Natively** (`src/canon.rs`, `src/store.rs`, `src/typecheck.rs`) |
+| **`Axiom.Strata`** | **Deterministic Silicon & Linear Memory.** Bounded loops (`while cond max N`), bitwise SIMD-friendly math, 4 MiB hardware-masked linear memory (`mem_load`/`mem_store`), **direct W3C WebAssembly binary emission** (`0.67 KB`–`10.8 KB`), and **direct Linux `x86_64` ELF64 machine-code emission** (`1.45 KB` executables) with **zero `rustc`**. | **Implemented Natively (`v0.2`)** (`src/strata_wasm.rs`, `src/strata_elf.rs`) + Rust host bridge (`src/codegen.rs`) for high-level `Secret<str>` I/O |
 
-### Why Rust Is Used Right Now (The Rocket-Stage Bootstrap)
+### Dual Backend Architecture in `v0.2`
 
-Building a production-grade register allocator and CPU/GPU instruction selector from scratch before testing the upper layers would lock the project in dark R&D for years. Instead, Axiom uses a **rocket-stage bootstrap**:
-
-- **Today (Stage 1 — `axiom-lang`):** `Axiom.Telos` (Z3 proofs) and `Axiom.Flux` (content-addressed graph + taint/capability checker) are native to Axiom, while **Rust serves as the temporary `Axiom.Strata` backend**—compiling verified Axiom subgraphs into stripped **340 KB** native Linux binaries (cached in `1ms` by immutable node hash) and **32.3 KB** `.wasm` modules.
-- **Later Stages (`axiom-zero`):** Once the higher layers are battle-tested, `Axiom.Strata` detaches Rust completely via direct self-hosted machine/GPU code generation.
-
-### The 7-Stage Axiom Roadmap
-
-1. **`axiom-lang` (This Repository — Stage 1):** Content-addressed semantic graph, Z3 anti-stub contract prover, `Secret<T>` taint pipes, native + 32 KB Wasm compiler, and Time-Travel Flight Recorder.
-2. **`axiom-ui` (Stage 2):** Ultra-lightweight GPU/Wasm scene-graph engine replacing bloated Electron/HTML/CSS stacks (4 MB RAM, sub-10ms cold start) and defining capsules for the "New Web".
-3. **`axiom-shell` (Stage 3):** Natural-language OS shell that translates human intent into Z3-verified capability graphs instead of error-prone `bash` strings.
-4. **`axiom-studio` (Stage 4):** Native multi-agent graph IDE written in Axiom (conflict-free parallel node editing without text merge conflicts).
-5. **`axiom-web` (Stage 5):** Native player for Axiom web capsules with a 100% local, sandboxed sanitizer for legacy `https://` sites (zero cloud MitM proxies).
-6. **`axiom-zero` (Stage 6):** Native `Axiom.Strata` codegen backend & compiler self-hosting (**detaching Rust**).
-7. **`axiom-os` (Stage 7):** Bootable minimal live-USB environment running the entire Axiom stack directly on hardware.
-
----
-
-## Live Browser Demo (Why There Is a Thin HTML/JS Loader in Stage 1)
-
-👉 **Try it in your browser:** **[https://aminadav-ai.github.io/axiom-lang/](https://aminadav-ai.github.io/axiom-lang/)**
-
-> **Architecture Note on the Showcase:** Inside `showcase/checkout.wasm` (**32.3 KB**, zero external crates), **100% of the verified payment graph, `Secret<T>` redaction, embedded Security Passport, and Time-Travel Flight Recorder execute natively in WebAssembly**. Because legacy browsers cannot open a bare `.wasm` URL without a host page to bind DOM inputs to Wasm linear memory, Stage 1 wraps `checkout.wasm` in a minimal zero-dependency HTML/CSS/JS inspector. Starting in **Stage 2 (`axiom-ui`)**, UI rendering itself moves inside GPU/Wasm capsules.
+- **Direct Zero-`rustc` `Axiom.Strata` Emitter (`compile-wasm`, `build-strata-wasm`, `build-strata-elf`, `run-strata`):** Emits raw W3C WebAssembly 1.0 bytecode (embedding the unforgeable `axiom.passport` custom section) or standalone `1.4 KB` Linux `x86_64` ELF64 binaries directly from the verified Axiom graph in milliseconds — no LLVM, no `rustc`, no `libc`.
+- **High-Level `Axiom.Flux` Host Bridge (`build`, `build-wasm`, `run`):** Lowers high-level `Secret<str>` / domain-pinned network capability workflows through `rustc -O` with immutable content-hash binary caching (`0 ms` cache hits).
 
 ---
 
 ## How Humans Debug & Audit Without Reading Code
 
-1. **Unforgeable 4-Line Security Passport (`axiom passport`):**
-   Generated deterministically by the compiler—never by an LLM. Lists every transitive capability (`Net("api.mybank.com")`, `Fs`, `Audit`) with its exact shortest call-chain witness, plus every `Secret<T>` data-flow pipe:
+1. **Unforgeable Security Passport (`axiom passport`):**
+   Generated deterministically by the compiler—never by an LLM. Lists every transitive capability (`Net("api.mybank.com")`, `Mem`, `Audit`) with its exact shortest call-chain witness, plus every `Secret<T>` data-flow pipe:
    ```text
    === AXIOM SECURITY PASSPORT ===
    Node:                 #768a631876e7 (checkout)
@@ -80,40 +76,46 @@ Building a production-grade register allocator and CPU/GPU instruction selector 
    error [E050_CONTRACT_VIOLATION] (1:1): Postcondition #1 failed for function 'withdraw_stub': ens ((result == (balance - amount)) && (result >= 0))
      counterexample: { amount = 1, balance = 1, result = 1 }
    ```
-3. **Time-Travel Flight Recorder & Causal "Why?" Tree:**
-   Every Wasm execution records deterministic frames that humans can scrub backward and forward with a timeline slider while keeping `Secret<T>` values redacted.
+3. **Linear-Memory Time-Travel Scrubbing:**
+   Deterministic state layout in `Axiom.Strata` makes full-frame and turn-by-turn Time-Travel scrubbing trivial inside a few kilobytes of WebAssembly.
 
 ---
 
 ## Quick Start (Local CLI)
 
 ### Prerequisites
-- Rust (`stable` toolchain + `wasm32-unknown-unknown` target)
+- Rust (`stable` toolchain to build the `axiom` CLI binary once)
 - `z3` SMT solver binary on `PATH` (or `~/.local/bin/z3`)
 
 ```bash
-# 1. Run full verification suite (Clippy, 18 integration tests, Z3 proofs, V8 Wasm replay)
+# 1. Run full v0.2 verification suite (Clippy, Sprints 1..7 tests, Z3 proofs, Strata Wasm & ELF64)
 ./scripts/run_checks.sh
 
-# 2. Verify & ingest an Axiom module into the content-addressed graph (.axiom/)
+# 2. Direct Axiom.Strata -> WebAssembly (.wasm) & Linux x86_64 ELF64 (ZERO rustc invoked!)
+cargo run -- compile-wasm examples/strata_framebuffer_demo.ax -o demo.wasm
+cargo run -- build-strata-elf render_gradient -o demo_elf
+cargo run -- run-strata render_gradient 32 32 7
+
+# 3. Verify & ingest high-level Secret<T> payment graph and inspect its Security Passport
 cargo run -- ingest examples/payment_demo.ax
-
-# 3. Inspect semantic deduplication, minimal AI neighbor context, and Security Passport
-cargo run -- graph
-cargo run -- show checkout
 cargo run -- passport checkout
-
-# 4. Build & run a standalone 340 KB native binary (1ms cache hit on repeat builds)
-cargo run -- build checkout
 cargo run -- run checkout "sk_live_secret_token" 10000 --trace
-
-# 5. Build 32.3 KB WebAssembly capsule or launch local Showcase HTTP server
-cargo run -- build-wasm checkout -o checkout.wasm
-cargo run -- serve-showcase
 ```
+
+---
+
+## The 7-Stage Axiom Roadmap
+
+1. **`axiom-lang` (Completed — `v0.1` & `v0.2`):** Content-addressed semantic graph, Z3 anti-stub contract prover, `Secret<T>` taint pipes, native `Axiom.Strata` zero-`rustc` `.wasm` & `x86_64` ELF64 emitters, and Time-Travel execution.
+2. **`axiom-ui` (Stage 2):** Ultra-lightweight GPU/Wasm scene-graph engine replacing bloated Electron/HTML/CSS stacks.
+3. **`axiom-shell` (Stage 3):** Natural-language OS shell translating human intent into Z3-verified capability graphs.
+4. **`axiom-studio` (Stage 4):** Native multi-agent graph IDE written in Axiom (conflict-free parallel node editing).
+5. **`axiom-web` (Stage 5):** Native player for Axiom web capsules with local sandboxed sanitization.
+6. **`axiom-zero` (Stage 6):** Full compiler self-hosting on `Axiom.Strata`.
+7. **`axiom-os` (Stage 7):** Bootable minimal live-USB environment running the Axiom stack directly on hardware.
 
 ---
 
 ## License
 
-Dual-licensed under **Business Source License 1.1 (`BUSL-1.1`)**—free for personal, academic, educational, non-commercial research, and evaluation use—and a separate **Commercial License** for commercial production deployments. See [LICENSE](LICENSE) and [CONTRIBUTING.md](CONTRIBUTING.md).
+Copyright (c) 2026 Yehuda Aminadav. Dual-licensed under **Business Source License 1.1 (`BUSL-1.1`)**—free for personal, academic, educational, non-commercial research, and evaluation use—and a separate **Commercial License** for commercial production deployments. See [LICENSE](LICENSE) and [CONTRIBUTING.md](CONTRIBUTING.md).
