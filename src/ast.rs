@@ -65,6 +65,11 @@ pub enum BinOp {
     Mul,
     Div,
     Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     Ne,
     Lt,
@@ -83,6 +88,11 @@ impl BinOp {
             BinOp::Mul => "*",
             BinOp::Div => "/",
             BinOp::Mod => "%",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "^",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
@@ -106,8 +116,19 @@ pub enum TargetRef {
 pub enum Stmt {
     Let {
         name: String,
+        #[serde(default)]
+        mutable: bool,
         ty: Option<Type>,
         value: Expr,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    While {
+        cond: Expr,
+        max_iters: u32,
+        body: Vec<Stmt>,
     },
     Expr(Expr),
 }
@@ -142,6 +163,13 @@ pub enum Expr {
         op: String,
         args: Vec<Expr>,
     },
+    MemLoad {
+        index: Box<Expr>,
+    },
+    MemStore {
+        index: Box<Expr>,
+        value: Box<Expr>,
+    },
     SecretWrap(Box<Expr>),
     Reveal {
         domain: String,
@@ -156,6 +184,8 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FnDef {
     pub name: String,
+    #[serde(default)]
+    pub exported: bool,
     pub params: Vec<Param>,
     pub effects: Vec<EffectCap>,
     pub ret_type: Type,

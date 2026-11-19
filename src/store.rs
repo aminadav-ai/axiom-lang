@@ -545,10 +545,24 @@ fn fn_uses_secret(f: &FnDef) -> bool {
         || expr_uses_secret(&f.body)
 }
 
+fn stmt_uses_secret(s: &Stmt) -> bool {
+    match s {
+        Stmt::Let { ty, value, .. } => {
+            ty.as_ref().is_some_and(type_has_secret) || expr_uses_secret(value)
+        }
+        Stmt::Assign { value, .. } => expr_uses_secret(value),
+        Stmt::While { cond, body, .. } => {
+            expr_uses_secret(cond) || body.iter().any(stmt_uses_secret)
+        }
+        Stmt::Expr(inner) => expr_uses_secret(inner),
+    }
+}
+
 fn expr_uses_secret(e: &Expr) -> bool {
     match e {
         Expr::SecretWrap(_) | Expr::Reveal { .. } => true,
-        Expr::Unary { expr: inner, .. } => expr_uses_secret(inner),
+        Expr::Unary { expr: inner, .. } | Expr::MemLoad { index: inner } => expr_uses_secret(inner),
+        Expr::MemStore { index, value } => expr_uses_secret(index) || expr_uses_secret(value),
         Expr::Binary { lhs, rhs, .. } => expr_uses_secret(lhs) || expr_uses_secret(rhs),
         Expr::If {
             cond,
@@ -556,17 +570,25 @@ fn expr_uses_secret(e: &Expr) -> bool {
             else_branch,
         } => expr_uses_secret(cond) || expr_uses_secret(then_branch) || expr_uses_secret(else_branch),
         Expr::Call { args, .. } | Expr::Perform { args, .. } => args.iter().any(expr_uses_secret),
-        Expr::Block { stmts, tail } => {
-            stmts.iter().any(|s| match s {
-                Stmt::Let { ty, value, .. } => {
-                    ty.as_ref().is_some_and(type_has_secret) || expr_uses_secret(value)
-                }
-                Stmt::Expr(inner) => expr_uses_secret(inner),
-            }) || expr_uses_secret(tail)
-        }
+        Expr::Block { stmts, tail } => stmts.iter().any(stmt_uses_secret) || expr_uses_secret(tail),
         Expr::IntLit(_) | Expr::BoolLit(_) | Expr::StrLit(_) | Expr::UnitLit | Expr::Var(_) => {
             false
         }
+    }
+}
+
+fn collect_stmt_calls(s: &Stmt, self_name: &str, out: &mut BTreeSet<String>) {
+    match s {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
+            collect_named_calls(value, self_name, out)
+        }
+        Stmt::While { cond, body, .. } => {
+            collect_named_calls(cond, self_name, out);
+            for inner in body {
+                collect_stmt_calls(inner, self_name, out);
+            }
+        }
+        Stmt::Expr(e) => collect_named_calls(e, self_name, out),
     }
 }
 
@@ -588,8 +610,13 @@ fn collect_named_calls(expr: &Expr, self_name: &str, out: &mut BTreeSet<String>)
             }
         }
         Expr::Unary { expr: inner, .. }
+        | Expr::MemLoad { index: inner }
         | Expr::SecretWrap(inner)
         | Expr::Reveal { expr: inner, .. } => collect_named_calls(inner, self_name, out),
+        Expr::MemStore { index, value } => {
+            collect_named_calls(index, self_name, out);
+            collect_named_calls(value, self_name, out);
+        }
         Expr::Binary { lhs, rhs, .. } => {
             collect_named_calls(lhs, self_name, out);
             collect_named_calls(rhs, self_name, out);
@@ -605,10 +632,7 @@ fn collect_named_calls(expr: &Expr, self_name: &str, out: &mut BTreeSet<String>)
         }
         Expr::Block { stmts, tail } => {
             for s in stmts {
-                match s {
-                    Stmt::Let { value, .. } => collect_named_calls(value, self_name, out),
-                    Stmt::Expr(e) => collect_named_calls(e, self_name, out),
-                }
+                collect_stmt_calls(s, self_name, out);
             }
             collect_named_calls(tail, self_name, out);
         }

@@ -181,6 +181,7 @@ struct ExecTrace {
     depth: usize,
     calls: Vec<CallRecord>,
     effects: Vec<EffectRecord>,
+    mem: Vec<i32>,
 }
 
 impl ExecTrace {
@@ -189,6 +190,7 @@ impl ExecTrace {
             depth: 0,
             calls: Vec::new(),
             effects: Vec::new(),
+            mem: vec![0i32; 65_536],
         }
     }
 
@@ -450,31 +452,76 @@ fn emit_wasm_expr(expr: &Expr, self_hash: &str, short_hash: &str, out: &mut Stri
             }
             out.push_str("]); () }");
         }
+        Expr::MemLoad { index } => {
+            out.push_str("(tr.mem[((");
+            emit_wasm_expr(index, self_hash, short_hash, out);
+            out.push_str(") as usize) & 0xFFFF] as i64)");
+        }
+        Expr::MemStore { index, value } => {
+            out.push_str("{ let __idx = ((");
+            emit_wasm_expr(index, self_hash, short_hash, out);
+            out.push_str(") as usize) & 0xFFFF; tr.mem[__idx] = (");
+            emit_wasm_expr(value, self_hash, short_hash, out);
+            out.push_str(") as i32; () }");
+        }
         Expr::Block { stmts, tail } => {
             out.push_str("{\n");
-            for s in stmts {
-                match s {
-                    Stmt::Let { name, ty, value } => {
-                        out.push_str("        let ");
-                        out.push_str(name);
-                        if let Some(t) = ty {
-                            out.push_str(": ");
-                            out.push_str(&rust_type(t));
-                        }
-                        out.push_str(" = ");
-                        emit_wasm_expr(value, self_hash, short_hash, out);
-                        out.push_str(";\n");
-                    }
-                    Stmt::Expr(e) => {
-                        out.push_str("        let _ = ");
-                        emit_wasm_expr(e, self_hash, short_hash, out);
-                        out.push_str(";\n");
-                    }
-                }
-            }
+            emit_wasm_stmt_list(stmts, self_hash, short_hash, out);
             out.push_str("        ");
             emit_wasm_expr(tail, self_hash, short_hash, out);
             out.push_str("\n    }");
+        }
+    }
+}
+
+fn emit_wasm_stmt_list(stmts: &[Stmt], self_hash: &str, short_hash: &str, out: &mut String) {
+    for s in stmts {
+        match s {
+            Stmt::Let {
+                name,
+                mutable,
+                ty,
+                value,
+            } => {
+                out.push_str(if *mutable {
+                    "        let mut "
+                } else {
+                    "        let "
+                });
+                out.push_str(name);
+                if let Some(t) = ty {
+                    out.push_str(": ");
+                    out.push_str(&rust_type(t));
+                }
+                out.push_str(" = ");
+                emit_wasm_expr(value, self_hash, short_hash, out);
+                out.push_str(";\n");
+            }
+            Stmt::Assign { name, value } => {
+                out.push_str("        ");
+                out.push_str(name);
+                out.push_str(" = ");
+                emit_wasm_expr(value, self_hash, short_hash, out);
+                out.push_str(";\n");
+            }
+            Stmt::While {
+                cond,
+                max_iters,
+                body,
+            } => {
+                out.push_str(&format!(
+                    "        {{\n            let mut __fuel: u32 = {max_iters};\n            while __fuel > 0 && ("
+                ));
+                emit_wasm_expr(cond, self_hash, short_hash, out);
+                out.push_str(") {\n                __fuel -= 1;\n");
+                emit_wasm_stmt_list(body, self_hash, short_hash, out);
+                out.push_str("            }\n        }\n");
+            }
+            Stmt::Expr(e) => {
+                out.push_str("        let _ = ");
+                emit_wasm_expr(e, self_hash, short_hash, out);
+                out.push_str(";\n");
+            }
         }
     }
 }

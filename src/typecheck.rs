@@ -275,7 +275,16 @@ where
                 ));
             }
             match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Div
+                | BinOp::Mod
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr => {
                     if lt == Type::I64 && rt == Type::I64 {
                         Ok(Type::I64)
                     } else {
@@ -283,11 +292,11 @@ where
                             "E060_TYPE_MISMATCH",
                             "typecheck",
                             format!(
-                                "Arithmetic operator '{}' expects (i64, i64), found ({lt}, {rt}) in '{fn_name}'",
+                                "Integer/bitwise operator '{}' expects (i64, i64), found ({lt}, {rt}) in '{fn_name}'",
                                 op.as_str()
                             ),
                             Span::zero(),
-                            "Ensure both operands of arithmetic operators have type i64",
+                            "Ensure both operands have type i64",
                         ))
                     }
                 }
@@ -480,6 +489,71 @@ where
             }
             Ok(Type::Unit)
         }
+        Expr::MemLoad { index } => {
+            if in_contract {
+                return Err(AxiomDiagnostic::new(
+                    "E066_EFFECT_IN_CONTRACT",
+                    "typecheck",
+                    format!("'mem_load' is forbidden inside contracts of '{fn_name}'"),
+                    Span::zero(),
+                    "Contracts ('req'/'ens') must be pure mathematical specifications",
+                ));
+            }
+            let idx_ty = check_expr(index, fn_name, self_node, env, load_callee, sinks, false)?;
+            if idx_ty != Type::I64 {
+                return Err(AxiomDiagnostic::new(
+                    "E060_TYPE_MISMATCH",
+                    "typecheck",
+                    format!("'mem_load' index in '{fn_name}' must be 'i64', found '{idx_ty}'"),
+                    Span::zero(),
+                    "Pass an i64 word index to mem_load(idx)",
+                ));
+            }
+            Ok(Type::I64)
+        }
+        Expr::MemStore { index, value } => {
+            if in_contract {
+                return Err(AxiomDiagnostic::new(
+                    "E066_EFFECT_IN_CONTRACT",
+                    "typecheck",
+                    format!("'mem_store' is forbidden inside contracts of '{fn_name}'"),
+                    Span::zero(),
+                    "Contracts ('req'/'ens') must be pure mathematical specifications",
+                ));
+            }
+            let idx_ty = check_expr(index, fn_name, self_node, env, load_callee, sinks, false)?;
+            if idx_ty != Type::I64 {
+                return Err(AxiomDiagnostic::new(
+                    "E060_TYPE_MISMATCH",
+                    "typecheck",
+                    format!("'mem_store' index in '{fn_name}' must be 'i64', found '{idx_ty}'"),
+                    Span::zero(),
+                    "Pass an i64 word index to mem_store(idx, val)",
+                ));
+            }
+            let val_ty = check_expr(value, fn_name, self_node, env, load_callee, sinks, false)?;
+            if type_contains_secret(&val_ty) {
+                return Err(AxiomDiagnostic::new(
+                    "E063_RAW_SECRET_SINK_LEAK",
+                    "typecheck",
+                    format!(
+                        "Security violation in '{fn_name}': raw '{val_ty}' cannot be written to shared Strata linear memory"
+                    ),
+                    Span::zero(),
+                    "Never store raw Secret<T> values in shared framebuffer/linear memory",
+                ));
+            }
+            if val_ty != Type::I64 {
+                return Err(AxiomDiagnostic::new(
+                    "E060_TYPE_MISMATCH",
+                    "typecheck",
+                    format!("'mem_store' value in '{fn_name}' must be 'i64', found '{val_ty}'"),
+                    Span::zero(),
+                    "Pass an i64 value to mem_store(idx, val)",
+                ));
+            }
+            Ok(Type::Unit)
+        }
         Expr::Call { target, args } => {
             let callee_node: CanonicalNode;
             let (callee_ast, callee_label): (&FnDef, String) = match target {
@@ -547,49 +621,15 @@ where
         }
         Expr::Block { stmts, tail } => {
             env.push();
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Let { name, ty, value } => {
-                        let val_ty = check_expr(
-                            value,
-                            fn_name,
-                            self_node,
-                            env,
-                            load_callee,
-                            sinks,
-                            in_contract,
-                        )?;
-                        if let Some(decl_ty) = ty {
-                            if &val_ty != decl_ty {
-                                env.pop();
-                                return Err(AxiomDiagnostic::new(
-                                    "E060_TYPE_MISMATCH",
-                                    "typecheck",
-                                    format!(
-                                        "Let binding '{name}' in '{fn_name}' declared type '{decl_ty}', but initializer has type '{val_ty}'"
-                                    ),
-                                    Span::zero(),
-                                    format!(
-                                        "Change annotation to '{val_ty}' or fix initializer expression"
-                                    ),
-                                ));
-                            }
-                        }
-                        env.bind(name.clone(), val_ty);
-                    }
-                    Stmt::Expr(e) => {
-                        let _ = check_expr(
-                            e,
-                            fn_name,
-                            self_node,
-                            env,
-                            load_callee,
-                            sinks,
-                            in_contract,
-                        )?;
-                    }
-                }
-            }
+            check_stmt_slice(
+                stmts,
+                fn_name,
+                self_node,
+                env,
+                load_callee,
+                sinks,
+                in_contract,
+            )?;
             let tail_ty = check_expr(
                 tail,
                 fn_name,
@@ -603,6 +643,117 @@ where
             Ok(tail_ty)
         }
     }
+}
+
+fn check_stmt_slice<F>(
+    stmts: &[Stmt],
+    fn_name: &str,
+    self_node: &CanonicalNode,
+    env: &mut TypeEnv,
+    load_callee: &F,
+    sinks: &mut Vec<DirectSecretSink>,
+    in_contract: bool,
+) -> Result<(), AxiomDiagnostic>
+where
+    F: Fn(&str) -> Result<CanonicalNode, AxiomDiagnostic>,
+{
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
+                let val_ty = check_expr(
+                    value,
+                    fn_name,
+                    self_node,
+                    env,
+                    load_callee,
+                    sinks,
+                    in_contract,
+                )?;
+                if let Some(decl_ty) = ty {
+                    if &val_ty != decl_ty {
+                        return Err(AxiomDiagnostic::new(
+                            "E060_TYPE_MISMATCH",
+                            "typecheck",
+                            format!(
+                                "Let binding '{name}' in '{fn_name}' declared type '{decl_ty}', but initializer has type '{val_ty}'"
+                            ),
+                            Span::zero(),
+                            format!("Change annotation to '{val_ty}' or fix initializer expression"),
+                        ));
+                    }
+                }
+                env.bind(name.clone(), val_ty);
+            }
+            Stmt::Assign { name, value } => {
+                let expected = env.lookup(name).ok_or_else(|| {
+                    AxiomDiagnostic::new(
+                        "E020_UNKNOWN_VAR",
+                        "typecheck",
+                        format!("Assignment to undeclared variable '{name}' in '{fn_name}'"),
+                        Span::zero(),
+                        "Declare mutable variable first with 'let mut'",
+                    )
+                })?;
+                let val_ty = check_expr(
+                    value,
+                    fn_name,
+                    self_node,
+                    env,
+                    load_callee,
+                    sinks,
+                    in_contract,
+                )?;
+                if val_ty != expected {
+                    return Err(AxiomDiagnostic::new(
+                        "E060_TYPE_MISMATCH",
+                        "typecheck",
+                        format!(
+                            "Assignment to '{name}' in '{fn_name}' expects type '{expected}', found '{val_ty}'"
+                        ),
+                        Span::zero(),
+                        format!("Assign a value of type '{expected}'"),
+                    ));
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                let c_ty = check_expr(
+                    cond,
+                    fn_name,
+                    self_node,
+                    env,
+                    load_callee,
+                    sinks,
+                    in_contract,
+                )?;
+                if c_ty != Type::Bool {
+                    return Err(AxiomDiagnostic::new(
+                        "E060_TYPE_MISMATCH",
+                        "typecheck",
+                        format!("'while' condition in '{fn_name}' must be 'bool', found '{c_ty}'"),
+                        Span::zero(),
+                        "Provide a boolean condition for 'while'",
+                    ));
+                }
+                env.push();
+                check_stmt_slice(body, fn_name, self_node, env, load_callee, sinks, in_contract)?;
+                env.pop();
+            }
+            Stmt::Expr(e) => {
+                let _ = check_expr(
+                    e,
+                    fn_name,
+                    self_node,
+                    env,
+                    load_callee,
+                    sinks,
+                    in_contract,
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn verify_net_domain_pinning(

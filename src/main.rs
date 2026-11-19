@@ -5,6 +5,8 @@ use axiom_lang::diag::{AxiomDiagnostic, Span};
 use axiom_lang::parser::parse_module;
 use axiom_lang::showcase::{build_showcase_assets, serve_showcase_http};
 use axiom_lang::store::GraphStore;
+use axiom_lang::strata_elf::{build_strata_elf_target, run_strata_elf_target};
+use axiom_lang::strata_wasm::{build_strata_wasm_from_module, build_strata_wasm_target};
 use axiom_lang::wasm::{build_wasm_module, WasmArtifact};
 use std::env;
 use std::fs;
@@ -100,6 +102,92 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
                         item.verify_ms,
                         storage_tag
                     );
+                }
+            }
+            Ok(())
+        }
+        ["compile-wasm", file_path, "-o", out_path] => {
+            let src = fs::read_to_string(file_path).map_err(|e| {
+                AxiomDiagnostic::new(
+                    "E040_FILE_READ",
+                    "cli",
+                    format!("Cannot read '{file_path}': {e}"),
+                    Span::zero(),
+                    "Provide a valid path to an .ax source file",
+                )
+            })?;
+            let module = parse_module(&src)?;
+            let mut store = GraphStore::open(&cwd)?;
+            let art = build_strata_wasm_from_module(&mut store, &module, Path::new(out_path))?;
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&art).unwrap_or_default());
+            } else {
+                println!(
+                    "  Strata Direct Wasm -> {} [{} node(s), exports={:?}, {} bytes ({:.2} KB) in {:.2}ms, zero rustc]",
+                    art.wasm_path,
+                    art.compiled_nodes,
+                    art.exported_functions,
+                    art.wasm_size_bytes,
+                    art.wasm_size_bytes as f64 / 1024.0,
+                    art.build_us as f64 / 1000.0
+                );
+            }
+            Ok(())
+        }
+        ["build-strata-wasm", target, "-o", out_path] => {
+            let store = GraphStore::open(&cwd)?;
+            let art = build_strata_wasm_target(&store, target, Path::new(out_path))?;
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&art).unwrap_or_default());
+            } else {
+                println!(
+                    "  Strata Direct Wasm -> {} [{} node(s), {} bytes ({:.2} KB) in {:.2}ms, zero rustc]",
+                    art.wasm_path,
+                    art.compiled_nodes,
+                    art.wasm_size_bytes,
+                    art.wasm_size_bytes as f64 / 1024.0,
+                    art.build_us as f64 / 1000.0
+                );
+            }
+            Ok(())
+        }
+        ["build-strata-elf", target, "-o", out_path] => {
+            let store = GraphStore::open(&cwd)?;
+            let art = build_strata_elf_target(&store, target, Path::new(out_path))?;
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&art).unwrap_or_default());
+            } else {
+                println!(
+                    "  Strata Direct ELF64 -> {} [{} node(s), {} bytes ({:.2} KB) in {:.2}ms, zero rustc]",
+                    art.elf_path,
+                    art.compiled_nodes,
+                    art.elf_size_bytes,
+                    art.elf_size_bytes as f64 / 1024.0,
+                    art.build_us as f64 / 1000.0
+                );
+            }
+            Ok(())
+        }
+        ["run-strata", target, rest @ ..] => {
+            let store = GraphStore::open(&cwd)?;
+            let outcome = run_strata_elf_target(&store, &cwd, target, rest)?;
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outcome).unwrap_or_default()
+                );
+            } else {
+                if !outcome.stdout.is_empty() {
+                    print!("{}", outcome.stdout);
+                }
+                if outcome.exit_code != 0 {
+                    return Err(AxiomDiagnostic::new(
+                        "E074_RUNTIME_REJECTED",
+                        "strata-elf",
+                        format!("Strata ELF '{}' exited with status {}", target, outcome.exit_code),
+                        Span::zero(),
+                        "Check CLI argument count and root 'req' preconditions",
+                    ));
                 }
             }
             Ok(())
@@ -322,7 +410,7 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             "cli",
             "Invalid CLI arguments",
             Span::zero(),
-            "Usage: axiom <verify <f.ax> | ingest <f.ax> | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
+            "Usage: axiom <verify <f.ax> | ingest <f.ax> | compile-wasm <f.ax> -o <out.wasm> | build-strata-wasm <ref> -o <out.wasm> | build-strata-elf <ref> -o <out> | run-strata <ref> [args...] | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
         )),
     }
 }

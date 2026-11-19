@@ -8,6 +8,8 @@ pub mod lexer;
 pub mod parser;
 pub mod showcase;
 pub mod store;
+pub mod strata_elf;
+pub mod strata_wasm;
 pub mod typecheck;
 pub mod verify;
 pub mod wasm;

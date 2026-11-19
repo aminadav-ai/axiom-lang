@@ -3,8 +3,12 @@ use crate::diag::{AxiomDiagnostic, Span};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     // Keywords
+    Export,
     Fn,
     Let,
+    Mut,
+    While,
+    Max,
     If,
     Else,
     Do,
@@ -12,12 +16,14 @@ pub enum TokenKind {
     Ens,
     True,
     False,
-    SecretKw, // secret(...)
-    RevealKw, // reveal(...)
+    SecretKw,
+    RevealKw,
+    MemLoadKw,
+    MemStoreKw,
 
     // Identifiers & Literals
     Ident(String),
-    HashRef(String), // #8f3a12...
+    HashRef(String),
     Int(i64),
     Str(String),
 
@@ -41,6 +47,11 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
+    Amp,
+    Pipe,
+    Caret,
+    Shl,
+    Shr,
     Bang,
     EqEq,
     NotEq,
@@ -72,7 +83,6 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
         let ch = src[pos..].chars().next().unwrap();
         let ch_len = ch.len_utf8();
 
-        // Whitespace
         if ch.is_whitespace() {
             if ch == '\n' {
                 line += 1;
@@ -84,7 +94,6 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             continue;
         }
 
-        // Single-line comments: // ...
         if src[pos..].starts_with("//") {
             while pos < len && bytes[pos] != b'\n' {
                 pos += 1;
@@ -96,21 +105,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
         let start_line = line;
         let start_col = col;
 
-        // Multi-char tokens
-        if src[pos..].starts_with("-[") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::EffectOpen,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
+        // 3-char tokens
         if src[pos..].starts_with("]->") {
             pos += 3;
             col += 3;
@@ -125,95 +120,37 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             });
             continue;
         }
-        if src[pos..].starts_with("->") {
+
+        // 2-char tokens
+        let two_char = if src[pos..].starts_with("-[") {
+            Some(TokenKind::EffectOpen)
+        } else if src[pos..].starts_with("->") {
+            Some(TokenKind::Arrow)
+        } else if src[pos..].starts_with("==") {
+            Some(TokenKind::EqEq)
+        } else if src[pos..].starts_with("!=") {
+            Some(TokenKind::NotEq)
+        } else if src[pos..].starts_with("<<") {
+            Some(TokenKind::Shl)
+        } else if src[pos..].starts_with(">>") {
+            Some(TokenKind::Shr)
+        } else if src[pos..].starts_with("<=") {
+            Some(TokenKind::Le)
+        } else if src[pos..].starts_with(">=") {
+            Some(TokenKind::Ge)
+        } else if src[pos..].starts_with("&&") {
+            Some(TokenKind::AndAnd)
+        } else if src[pos..].starts_with("||") {
+            Some(TokenKind::OrOr)
+        } else {
+            None
+        };
+
+        if let Some(kind) = two_char {
             pos += 2;
             col += 2;
             tokens.push(Token {
-                kind: TokenKind::Arrow,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
-        if src[pos..].starts_with("==") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::EqEq,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
-        if src[pos..].starts_with("!=") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::NotEq,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
-        if src[pos..].starts_with("<=") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::Le,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
-        if src[pos..].starts_with(">=") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::Ge,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
-        if src[pos..].starts_with("&&") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::AndAnd,
-                span: Span {
-                    start,
-                    end: pos,
-                    line: start_line,
-                    col: start_col,
-                },
-            });
-            continue;
-        }
-        if src[pos..].starts_with("||") {
-            pos += 2;
-            col += 2;
-            tokens.push(Token {
-                kind: TokenKind::OrOr,
+                kind,
                 span: Span {
                     start,
                     end: pos,
@@ -325,18 +262,56 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             continue;
         }
 
-        // Integer literal
+        // Hex or decimal integer literal (supports 0xFF228833 and underscore separators 10_000)
         if ch.is_ascii_digit() {
-            while pos < len && bytes[pos].is_ascii_digit() {
+            if src[pos..].starts_with("0x") || src[pos..].starts_with("0X") {
+                pos += 2;
+                col += 2;
+                let hex_start = pos;
+                while pos < len && (bytes[pos].is_ascii_hexdigit() || bytes[pos] == b'_') {
+                    pos += 1;
+                    col += 1;
+                }
+                let clean: String = src[hex_start..pos]
+                    .chars()
+                    .filter(|&c| c != '_')
+                    .collect();
+                let uval = u64::from_str_radix(&clean, 16).map_err(|_| {
+                    AxiomDiagnostic::new(
+                        "E003_INT_OVERFLOW",
+                        "lex",
+                        format!("Invalid or overflowing hex literal '0x{clean}'"),
+                        Span {
+                            start,
+                            end: pos,
+                            line: start_line,
+                            col: start_col,
+                        },
+                        "Use a valid 64-bit hexadecimal literal (e.g. 0xFF228844)",
+                    )
+                })?;
+                tokens.push(Token {
+                    kind: TokenKind::Int(uval as i64),
+                    span: Span {
+                        start,
+                        end: pos,
+                        line: start_line,
+                        col: start_col,
+                    },
+                });
+                continue;
+            }
+
+            while pos < len && (bytes[pos].is_ascii_digit() || bytes[pos] == b'_') {
                 pos += 1;
                 col += 1;
             }
-            let num_str = &src[start..pos];
-            let val = num_str.parse::<i64>().map_err(|_| {
+            let clean: String = src[start..pos].chars().filter(|&c| c != '_').collect();
+            let val = clean.parse::<i64>().map_err(|_| {
                 AxiomDiagnostic::new(
                     "E003_INT_OVERFLOW",
                     "lex",
-                    format!("Integer literal '{num_str}' overflows i64"),
+                    format!("Integer literal '{}' overflows i64", &src[start..pos]),
                     Span {
                         start,
                         end: pos,
@@ -358,7 +333,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             continue;
         }
 
-        // Identifiers & Keywords (also allows $result / $self in canonical round-trips)
+        // Identifiers & Keywords
         if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
             pos += 1;
             col += 1;
@@ -368,8 +343,12 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             }
             let word = &src[start..pos];
             let kind = match word {
+                "export" => TokenKind::Export,
                 "fn" => TokenKind::Fn,
                 "let" => TokenKind::Let,
+                "mut" => TokenKind::Mut,
+                "while" => TokenKind::While,
+                "max" => TokenKind::Max,
                 "if" => TokenKind::If,
                 "else" => TokenKind::Else,
                 "do" => TokenKind::Do,
@@ -379,6 +358,8 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
                 "false" => TokenKind::False,
                 "secret" => TokenKind::SecretKw,
                 "reveal" => TokenKind::RevealKw,
+                "mem_load" => TokenKind::MemLoadKw,
+                "mem_store" => TokenKind::MemStoreKw,
                 _ => TokenKind::Ident(word.to_string()),
             };
             tokens.push(Token {
@@ -409,6 +390,9 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             '*' => Some(TokenKind::Star),
             '/' => Some(TokenKind::Slash),
             '%' => Some(TokenKind::Percent),
+            '&' => Some(TokenKind::Amp),
+            '|' => Some(TokenKind::Pipe),
+            '^' => Some(TokenKind::Caret),
             '!' => Some(TokenKind::Bang),
             '<' => Some(TokenKind::Lt),
             '>' => Some(TokenKind::Gt),

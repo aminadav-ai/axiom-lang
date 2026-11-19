@@ -134,6 +134,36 @@ where
                         };
                         Ok(format!("({fn_name} {l} {r})"))
                     }
+                    BinOp::Shl => {
+                        if let Expr::IntLit(k) = rhs.as_ref() {
+                            if (0..=30).contains(k) {
+                                let factor = 1_i64 << (*k as u32);
+                                return Ok(format!("(* {l} {factor})"));
+                            }
+                        }
+                        let r = self.encode_expr(rhs, env, guard, emit_checks)?;
+                        Ok(format!("(ax_shl {l} {r})"))
+                    }
+                    BinOp::Shr => {
+                        if let Expr::IntLit(k) = rhs.as_ref() {
+                            if (0..=30).contains(k) {
+                                let factor = 1_i64 << (*k as u32);
+                                return Ok(format!("(div {l} {factor})"));
+                            }
+                        }
+                        let r = self.encode_expr(rhs, env, guard, emit_checks)?;
+                        Ok(format!("(ax_shr {l} {r})"))
+                    }
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                        let r = self.encode_expr(rhs, env, guard, emit_checks)?;
+                        let fn_name = match op {
+                            BinOp::BitAnd => "ax_band",
+                            BinOp::BitOr => "ax_bor",
+                            BinOp::BitXor => "ax_bxor",
+                            _ => unreachable!(),
+                        };
+                        Ok(format!("({fn_name} {l} {r})"))
+                    }
                     other => {
                         let r = self.encode_expr(rhs, env, guard, emit_checks)?;
                         let smt_op = match other {
@@ -146,7 +176,15 @@ where
                             BinOp::Le => "<=",
                             BinOp::Gt => ">",
                             BinOp::Ge => ">=",
-                            BinOp::Div | BinOp::Mod | BinOp::And | BinOp::Or => unreachable!(),
+                            BinOp::Div
+                            | BinOp::Mod
+                            | BinOp::And
+                            | BinOp::Or
+                            | BinOp::BitAnd
+                            | BinOp::BitOr
+                            | BinOp::BitXor
+                            | BinOp::Shl
+                            | BinOp::Shr => unreachable!(),
                         };
                         Ok(format!("({smt_op} {l} {r})"))
                     }
@@ -169,6 +207,15 @@ where
                 for a in args {
                     let _ = self.encode_expr(a, env, guard, emit_checks)?;
                 }
+                Ok("true".to_string())
+            }
+            Expr::MemLoad { index } => {
+                let _ = self.encode_expr(index, env, guard, emit_checks)?;
+                Ok(self.fresh_sym("mem_rd", &Type::I64))
+            }
+            Expr::MemStore { index, value } => {
+                let _ = self.encode_expr(index, env, guard, emit_checks)?;
+                let _ = self.encode_expr(value, env, guard, emit_checks)?;
                 Ok("true".to_string())
             }
             Expr::Call { target, args } => {
@@ -250,19 +297,72 @@ where
             }
             Expr::Block { stmts, tail } => {
                 let mut local_env = env.clone();
-                for stmt in stmts {
-                    match stmt {
-                        Stmt::Let { name, value, .. } => {
-                            let v_smt = self.encode_expr(value, &local_env, guard, emit_checks)?;
-                            local_env.insert(name.clone(), v_smt);
-                        }
-                        Stmt::Expr(e) => {
-                            let _ = self.encode_expr(e, &local_env, guard, emit_checks)?;
-                        }
-                    }
-                }
+                let mut local_types = BTreeMap::new();
+                self.encode_stmt_slice(stmts, &mut local_env, &mut local_types, guard, emit_checks)?;
                 self.encode_expr(tail, &local_env, guard, emit_checks)
             }
+        }
+    }
+
+    fn encode_stmt_slice(
+        &mut self,
+        stmts: &[Stmt],
+        local_env: &mut BTreeMap<String, String>,
+        local_types: &mut BTreeMap<String, Type>,
+        guard: &str,
+        emit_checks: bool,
+    ) -> Result<(), AxiomDiagnostic> {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let {
+                    name, ty, value, ..
+                } => {
+                    let v_smt = self.encode_expr(value, local_env, guard, emit_checks)?;
+                    local_env.insert(name.clone(), v_smt);
+                    local_types.insert(name.clone(), ty.clone().unwrap_or(Type::I64));
+                }
+                Stmt::Assign { name, value } => {
+                    let v_smt = self.encode_expr(value, local_env, guard, emit_checks)?;
+                    local_env.insert(name.clone(), v_smt);
+                }
+                Stmt::While { cond, body, .. } => {
+                    // Sound loop abstraction: havoc all variables mutated inside the loop
+                    let mut mutated = std::collections::BTreeSet::new();
+                    collect_mutated_vars(body, &mut mutated);
+                    for mvar in mutated {
+                        let mty = local_types.get(&mvar).cloned().unwrap_or(Type::I64);
+                        let fresh = self.fresh_sym("loop_havoc", &mty);
+                        local_env.insert(mvar, fresh);
+                    }
+                    let c_smt = self.encode_expr(cond, local_env, guard, emit_checks)?;
+                    let body_guard = conjoin_guard(guard, &c_smt);
+                    let mut inner_env = local_env.clone();
+                    let mut inner_types = local_types.clone();
+                    self.encode_stmt_slice(
+                        body,
+                        &mut inner_env,
+                        &mut inner_types,
+                        &body_guard,
+                        emit_checks,
+                    )?;
+                }
+                Stmt::Expr(e) => {
+                    let _ = self.encode_expr(e, local_env, guard, emit_checks)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn collect_mutated_vars(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
+    for s in stmts {
+        match s {
+            Stmt::Assign { name, .. } => {
+                out.insert(name.clone());
+            }
+            Stmt::While { body, .. } => collect_mutated_vars(body, out),
+            Stmt::Let { .. } | Stmt::Expr(_) => {}
         }
     }
 }
@@ -469,6 +569,11 @@ fn smt_prelude(param_decls: &[String], extra_decls: &[String]) -> String {
         "(define-fun ax_div ((a Int) (b Int)) Int (ite (>= a 0) (ite (>= b 0) (div a b) (- (div a (- b)))) (ite (>= b 0) (- (div (- a) b)) (div (- a) (- b)))))\n",
     );
     s.push_str("(define-fun ax_mod ((a Int) (b Int)) Int (- a (* (ax_div a b) b)))\n");
+    s.push_str("(declare-fun ax_band (Int Int) Int)\n");
+    s.push_str("(declare-fun ax_bor (Int Int) Int)\n");
+    s.push_str("(declare-fun ax_bxor (Int Int) Int)\n");
+    s.push_str("(declare-fun ax_shl (Int Int) Int)\n");
+    s.push_str("(declare-fun ax_shr (Int Int) Int)\n");
     for d in param_decls {
         s.push_str(d);
         s.push('\n');

@@ -1,5 +1,5 @@
 {
-  "wasm_size_bytes": 33029,
+  "wasm_size_bytes": 33060,
   "ingested_nodes": [
     {
       "alias": "calc_fee_agent_a",
@@ -7,7 +7,7 @@
       "short_hash": "3fca26293539",
       "deduplicated": false,
       "obligations_proved": 2,
-      "verify_ms": 113
+      "verify_ms": 121
     },
     {
       "alias": "compute_commission_agent_b",
@@ -15,7 +15,7 @@
       "short_hash": "3fca26293539",
       "deduplicated": true,
       "obligations_proved": 2,
-      "verify_ms": 165
+      "verify_ms": 133
     },
     {
       "alias": "send_bank_wire",
@@ -23,7 +23,7 @@
       "short_hash": "644f79bfca37",
       "deduplicated": false,
       "obligations_proved": 1,
-      "verify_ms": 64
+      "verify_ms": 62
     },
     {
       "alias": "checkout",

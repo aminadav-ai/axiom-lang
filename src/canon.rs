@@ -17,7 +17,7 @@ pub struct CanonicalNode {
 }
 
 struct ScopeEnv {
-    frames: Vec<Vec<(String, String)>>,
+    frames: Vec<Vec<(String, String, bool)>>,
     next_local: usize,
     allow_result: bool,
 }
@@ -26,7 +26,7 @@ impl ScopeEnv {
     fn new(params: &[Param]) -> Self {
         let mut root = Vec::with_capacity(params.len());
         for (i, p) in params.iter().enumerate() {
-            root.push((p.name.clone(), format!("p{i}")));
+            root.push((p.name.clone(), format!("p{i}"), false));
         }
         Self {
             frames: vec![root],
@@ -43,23 +43,23 @@ impl ScopeEnv {
         self.frames.pop();
     }
 
-    fn bind_local(&mut self, raw_name: &str) -> String {
+    fn bind_local(&mut self, raw_name: &str, mutable: bool) -> String {
         let cname = format!("l{}", self.next_local);
         self.next_local += 1;
         if let Some(frame) = self.frames.last_mut() {
-            frame.push((raw_name.to_string(), cname.clone()));
+            frame.push((raw_name.to_string(), cname.clone(), mutable));
         }
         cname
     }
 
-    fn lookup(&self, name: &str) -> Option<String> {
+    fn lookup(&self, name: &str) -> Option<(String, bool)> {
         if self.allow_result && (name == "result" || name == "$result") {
-            return Some("$result".to_string());
+            return Some(("$result".to_string(), false));
         }
         for frame in self.frames.iter().rev() {
-            for (raw, canon) in frame.iter().rev() {
+            for (raw, canon, mutable) in frame.iter().rev() {
                 if raw == name {
-                    return Some(canon.clone());
+                    return Some((canon.clone(), *mutable));
                 }
             }
         }
@@ -90,7 +90,6 @@ where
         })
         .collect();
 
-    // Deduplicate & canonically sort declared effects
     let effects_set: BTreeSet<EffectCap> = raw_fn.effects.iter().cloned().collect();
 
     let mut canon_requires = Vec::with_capacity(raw_fn.requires.len());
@@ -131,7 +130,6 @@ where
         resolve_hash,
     )?;
 
-    // Ensure any `do Effect.op(...)` inside the body is Declared in the node's signature!
     for used_eff in &perform_effects {
         let covered = effects_set.iter().any(|decl| decl.name == *used_eff);
         if !covered {
@@ -153,8 +151,10 @@ where
 
     let canon_effects: Vec<EffectCap> = effects_set.into_iter().collect();
 
+    // Note: `exported` is interface metadata (kept in `ast` for module emitters, excluded from semantic hash text)
     let canon_ast = FnDef {
         name: "_".to_string(),
+        exported: raw_fn.exported,
         params: canon_params,
         effects: canon_effects.clone(),
         ret_type: raw_fn.ret_type.clone(),
@@ -180,6 +180,127 @@ where
     })
 }
 
+fn canon_stmts<FN, FH>(
+    stmts: &[Stmt],
+    self_name: &str,
+    env: &mut ScopeEnv,
+    deps: &mut BTreeSet<String>,
+    perform_effects: &mut BTreeSet<String>,
+    resolve_name: &FN,
+    resolve_hash: &FH,
+) -> Result<Vec<Stmt>, AxiomDiagnostic>
+where
+    FN: Fn(&str) -> Result<String, AxiomDiagnostic>,
+    FH: Fn(&str) -> Result<String, AxiomDiagnostic>,
+{
+    let mut cstmts = Vec::with_capacity(stmts.len());
+    for s in stmts {
+        match s {
+            Stmt::Let {
+                name,
+                mutable,
+                ty,
+                value,
+            } => {
+                let cval = canon_expr(
+                    value,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?;
+                let cname = env.bind_local(name, *mutable);
+                cstmts.push(Stmt::Let {
+                    name: cname,
+                    mutable: *mutable,
+                    ty: ty.clone(),
+                    value: cval,
+                });
+            }
+            Stmt::Assign { name, value } => {
+                let (cname, is_mut) = env.lookup(name).ok_or_else(|| {
+                    AxiomDiagnostic::new(
+                        "E020_UNKNOWN_VAR",
+                        "resolve",
+                        format!("Assignment to unknown variable '{name}' in '{self_name}'"),
+                        Span::zero(),
+                        "Declare the variable first with 'let mut <name> = ...;'",
+                    )
+                })?;
+                if !is_mut {
+                    return Err(AxiomDiagnostic::new(
+                        "E067_ASSIGN_IMMUTABLE",
+                        "resolve",
+                        format!(
+                            "Cannot assign to immutable variable '{name}' in function '{self_name}'"
+                        ),
+                        Span::zero(),
+                        format!("Declare '{name}' as mutable with 'let mut {name} = ...;'"),
+                    ));
+                }
+                let cval = canon_expr(
+                    value,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?;
+                cstmts.push(Stmt::Assign {
+                    name: cname,
+                    value: cval,
+                });
+            }
+            Stmt::While {
+                cond,
+                max_iters,
+                body,
+            } => {
+                let ccond = canon_expr(
+                    cond,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?;
+                env.push_frame();
+                let cbody = canon_stmts(
+                    body,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?;
+                env.pop_frame();
+                cstmts.push(Stmt::While {
+                    cond: ccond,
+                    max_iters: *max_iters,
+                    body: cbody,
+                });
+            }
+            Stmt::Expr(e) => {
+                cstmts.push(Stmt::Expr(canon_expr(
+                    e,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?));
+            }
+        }
+    }
+    Ok(cstmts)
+}
+
 fn canon_expr<FN, FH>(
     expr: &Expr,
     self_name: &str,
@@ -199,7 +320,7 @@ where
         Expr::StrLit(s) => Ok(Expr::StrLit(s.clone())),
         Expr::UnitLit => Ok(Expr::UnitLit),
         Expr::Var(name) => {
-            let cname = env.lookup(name).ok_or_else(|| {
+            let (cname, _) = env.lookup(name).ok_or_else(|| {
                 AxiomDiagnostic::new(
                     "E020_UNKNOWN_VAR",
                     "resolve",
@@ -328,6 +449,43 @@ where
                 args: cargs,
             })
         }
+        Expr::MemLoad { index } => {
+            perform_effects.insert("Mem".to_string());
+            Ok(Expr::MemLoad {
+                index: Box::new(canon_expr(
+                    index,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?),
+            })
+        }
+        Expr::MemStore { index, value } => {
+            perform_effects.insert("Mem".to_string());
+            Ok(Expr::MemStore {
+                index: Box::new(canon_expr(
+                    index,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?),
+                value: Box::new(canon_expr(
+                    value,
+                    self_name,
+                    env,
+                    deps,
+                    perform_effects,
+                    resolve_name,
+                    resolve_hash,
+                )?),
+            })
+        }
         Expr::SecretWrap(inner) => Ok(Expr::SecretWrap(Box::new(canon_expr(
             inner,
             self_name,
@@ -351,39 +509,15 @@ where
         }),
         Expr::Block { stmts, tail } => {
             env.push_frame();
-            let mut cstmts = Vec::with_capacity(stmts.len());
-            for s in stmts {
-                match s {
-                    Stmt::Let { name, ty, value } => {
-                        let cval = canon_expr(
-                            value,
-                            self_name,
-                            env,
-                            deps,
-                            perform_effects,
-                            resolve_name,
-                            resolve_hash,
-                        )?;
-                        let cname = env.bind_local(name);
-                        cstmts.push(Stmt::Let {
-                            name: cname,
-                            ty: ty.clone(),
-                            value: cval,
-                        });
-                    }
-                    Stmt::Expr(e) => {
-                        cstmts.push(Stmt::Expr(canon_expr(
-                            e,
-                            self_name,
-                            env,
-                            deps,
-                            perform_effects,
-                            resolve_name,
-                            resolve_hash,
-                        )?));
-                    }
-                }
-            }
+            let cstmts = canon_stmts(
+                stmts,
+                self_name,
+                env,
+                deps,
+                perform_effects,
+                resolve_name,
+                resolve_hash,
+            )?;
             let ctail = canon_expr(
                 tail,
                 self_name,
@@ -453,26 +587,54 @@ fn format_type(ty: &Type, out: &mut String) {
     out.push_str(&ty.to_string());
 }
 
+fn format_stmt(s: &Stmt, out: &mut String) {
+    match s {
+        Stmt::Let {
+            name,
+            mutable,
+            ty,
+            value,
+        } => {
+            out.push_str(if *mutable { "let mut " } else { "let " });
+            out.push_str(name);
+            if let Some(t) = ty {
+                out.push(':');
+                format_type(t, out);
+            }
+            out.push_str(" = ");
+            format_expr(value, out);
+            out.push_str("; ");
+        }
+        Stmt::Assign { name, value } => {
+            out.push_str(name);
+            out.push_str(" = ");
+            format_expr(value, out);
+            out.push_str("; ");
+        }
+        Stmt::While {
+            cond,
+            max_iters,
+            body,
+        } => {
+            out.push_str("while ");
+            format_expr(cond, out);
+            out.push_str(&format!(" max {max_iters} {{ "));
+            for inner in body {
+                format_stmt(inner, out);
+            }
+            out.push_str("} ");
+        }
+        Stmt::Expr(e) => {
+            format_expr(e, out);
+            out.push_str("; ");
+        }
+    }
+}
+
 fn format_body(expr: &Expr, out: &mut String) {
     if let Expr::Block { stmts, tail } = expr {
         for s in stmts {
-            match s {
-                Stmt::Let { name, ty, value } => {
-                    out.push_str("let ");
-                    out.push_str(name);
-                    if let Some(t) = ty {
-                        out.push(':');
-                        format_type(t, out);
-                    }
-                    out.push_str(" = ");
-                    format_expr(value, out);
-                    out.push_str("; ");
-                }
-                Stmt::Expr(e) => {
-                    format_expr(e, out);
-                    out.push_str("; ");
-                }
-            }
+            format_stmt(s, out);
         }
         format_expr(tail, out);
     } else {
@@ -564,6 +726,18 @@ fn format_expr(expr: &Expr, out: &mut String) {
                 }
                 format_expr(a, out);
             }
+            out.push(')');
+        }
+        Expr::MemLoad { index } => {
+            out.push_str("mem_load(");
+            format_expr(index, out);
+            out.push(')');
+        }
+        Expr::MemStore { index, value } => {
+            out.push_str("mem_store(");
+            format_expr(index, out);
+            out.push_str(", ");
+            format_expr(value, out);
             out.push(')');
         }
         Expr::SecretWrap(inner) => {

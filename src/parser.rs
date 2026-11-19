@@ -24,6 +24,14 @@ impl Parser {
         &self.tokens[self.idx]
     }
 
+    fn peek_next(&self) -> &TokenKind {
+        if self.idx + 1 < self.tokens.len() {
+            &self.tokens[self.idx + 1].kind
+        } else {
+            &TokenKind::Eof
+        }
+    }
+
     fn at_eof(&self) -> bool {
         matches!(self.peek().kind, TokenKind::Eof)
     }
@@ -67,9 +75,16 @@ impl Parser {
     }
 
     fn parse_fn(&mut self) -> Result<FnDef, AxiomDiagnostic> {
+        let exported = if matches!(self.peek().kind, TokenKind::Export) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         self.expect(
             &TokenKind::Fn,
-            "Start each Axiom node definition with 'fn <name>(...) -> <type> { ... }'",
+            "Start each Axiom node definition with 'fn <name>(...) -> <type> { ... }' or 'export fn ...'",
         )?;
         let (name, _) = self.expect_ident("Provide a function alias name after 'fn'")?;
         self.expect(&TokenKind::LParen, "Expected '(' to start parameter list")?;
@@ -96,7 +111,6 @@ impl Parser {
         }
         self.expect(&TokenKind::RParen, "Expected ')' after parameter list")?;
 
-        // Either `-> RetType` (pure) or `-[Cap1, Cap2("scope")]-> RetType` (effectful)
         let mut effects = Vec::new();
         match &self.peek().kind {
             TokenKind::Arrow => {
@@ -152,7 +166,7 @@ impl Parser {
                     "parse",
                     format!("Expected '->' or '-[...]->', found {other:?}"),
                     self.peek().span,
-                    "Specify return type with '-> <Type>' or effects + return type with '-[Net]-> <Type>'",
+                    "Specify return type with '-> <Type>' or effects + return type with '-[Mem]-> <Type>'",
                 ));
             }
         }
@@ -179,6 +193,7 @@ impl Parser {
 
         Ok(FnDef {
             name,
+            exported,
             params,
             effects,
             ret_type,
@@ -211,26 +226,129 @@ impl Parser {
         }
     }
 
+    fn parse_stmt_list_block(&mut self) -> Result<Vec<Stmt>, AxiomDiagnostic> {
+        self.expect(&TokenKind::LBrace, "Expected '{' to start loop body")?;
+        let mut stmts = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
+            stmts.push(self.parse_single_stmt_in_loop()?);
+        }
+        self.expect(&TokenKind::RBrace, "Expected '}' to close loop body")?;
+        Ok(stmts)
+    }
+
+    fn parse_single_stmt_in_loop(&mut self) -> Result<Stmt, AxiomDiagnostic> {
+        if matches!(self.peek().kind, TokenKind::Let) {
+            return self.parse_let_stmt();
+        }
+        if matches!(self.peek().kind, TokenKind::While) {
+            return self.parse_while_stmt();
+        }
+        if matches!(&self.peek().kind, TokenKind::Ident(_))
+            && matches!(self.peek_next(), TokenKind::Assign)
+        {
+            let (vname, _) = self.expect_ident("Expected variable name")?;
+            self.expect(&TokenKind::Assign, "Expected '='")?;
+            let val = self.parse_expr()?;
+            self.expect(&TokenKind::Semi, "Terminate assignment statement with ';'")?;
+            return Ok(Stmt::Assign {
+                name: vname,
+                value: val,
+            });
+        }
+        let expr = self.parse_expr()?;
+        if matches!(self.peek().kind, TokenKind::Semi) {
+            self.advance();
+        } else if !matches!(expr, Expr::If { .. } | Expr::Block { .. }) {
+            self.expect(&TokenKind::Semi, "Terminate statement inside loop with ';'")?;
+        }
+        Ok(Stmt::Expr(expr))
+    }
+
+    fn parse_let_stmt(&mut self) -> Result<Stmt, AxiomDiagnostic> {
+        self.expect(&TokenKind::Let, "Expected 'let'")?;
+        let mutable = if matches!(self.peek().kind, TokenKind::Mut) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        let (vname, _) = self.expect_ident("Expected variable name after 'let'")?;
+        let ty = if matches!(self.peek().kind, TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Assign, "Expected '=' in let binding")?;
+        let val = self.parse_expr()?;
+        self.expect(&TokenKind::Semi, "Terminate 'let' binding with ';'")?;
+        Ok(Stmt::Let {
+            name: vname,
+            mutable,
+            ty,
+            value: val,
+        })
+    }
+
+    fn parse_while_stmt(&mut self) -> Result<Stmt, AxiomDiagnostic> {
+        let w_tok = self.expect(&TokenKind::While, "Expected 'while'")?;
+        let cond = self.parse_expr()?;
+        self.expect(
+            &TokenKind::Max,
+            "Every 'while' loop in Axiom.Strata must declare an explicit upper bound: 'while <cond> max <N> { ... }'",
+        )?;
+        let bound_tok = self.peek().clone();
+        let max_iters = match bound_tok.kind {
+            TokenKind::Int(v) if v > 0 && v <= u32::MAX as i64 => {
+                self.advance();
+                v as u32
+            }
+            _ => {
+                return Err(AxiomDiagnostic::new(
+                    "E017_INVALID_LOOP_BOUND",
+                    "parse",
+                    format!(
+                        "Expected positive integer constant after 'max', found {:?}",
+                        bound_tok.kind
+                    ),
+                    w_tok.span,
+                    "Provide a positive compile-time iteration bound (e.g. 'while i < n max 4096 { ... }')",
+                ));
+            }
+        };
+        let body = self.parse_stmt_list_block()?;
+        if matches!(self.peek().kind, TokenKind::Semi) {
+            self.advance();
+        }
+        Ok(Stmt::While {
+            cond,
+            max_iters,
+            body,
+        })
+    }
+
     fn parse_block_expr(&mut self) -> Result<Expr, AxiomDiagnostic> {
         self.expect(&TokenKind::LBrace, "Expected '{' to open block")?;
         let mut stmts = Vec::new();
 
         while !matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
             if matches!(self.peek().kind, TokenKind::Let) {
-                self.advance();
-                let (vname, _) = self.expect_ident("Expected variable name after 'let'")?;
-                let ty = if matches!(self.peek().kind, TokenKind::Colon) {
-                    self.advance();
-                    Some(self.parse_type()?)
-                } else {
-                    None
-                };
-                self.expect(&TokenKind::Assign, "Expected '=' in let binding")?;
+                stmts.push(self.parse_let_stmt()?);
+                continue;
+            }
+            if matches!(self.peek().kind, TokenKind::While) {
+                stmts.push(self.parse_while_stmt()?);
+                continue;
+            }
+            if matches!(&self.peek().kind, TokenKind::Ident(_))
+                && matches!(self.peek_next(), TokenKind::Assign)
+            {
+                let (vname, _) = self.expect_ident("Expected variable name")?;
+                self.expect(&TokenKind::Assign, "Expected '='")?;
                 let val = self.parse_expr()?;
-                self.expect(&TokenKind::Semi, "Terminate 'let' binding with ';'")?;
-                stmts.push(Stmt::Let {
+                self.expect(&TokenKind::Semi, "Terminate assignment with ';'")?;
+                stmts.push(Stmt::Assign {
                     name: vname,
-                    ty,
                     value: val,
                 });
                 continue;
@@ -240,7 +358,6 @@ impl Parser {
             if matches!(self.peek().kind, TokenKind::Semi) {
                 self.advance();
                 if matches!(self.peek().kind, TokenKind::RBrace) {
-                    // Trailing semicolon returns unit
                     self.advance();
                     stmts.push(Stmt::Expr(expr));
                     return Ok(Expr::Block {
@@ -248,6 +365,11 @@ impl Parser {
                         tail: Box::new(Expr::UnitLit),
                     });
                 }
+                stmts.push(Stmt::Expr(expr));
+            } else if matches!(expr, Expr::If { .. })
+                && !matches!(self.peek().kind, TokenKind::RBrace)
+            {
+                // Allow `if cond { ... } else { ... }` statement without `;` before next statement
                 stmts.push(Stmt::Expr(expr));
             } else {
                 self.expect(
@@ -290,12 +412,54 @@ impl Parser {
     }
 
     fn parse_and(&mut self) -> Result<Expr, AxiomDiagnostic> {
-        let mut lhs = self.parse_eq()?;
+        let mut lhs = self.parse_bitor()?;
         while matches!(self.peek().kind, TokenKind::AndAnd) {
+            self.advance();
+            let rhs = self.parse_bitor()?;
+            lhs = Expr::Binary {
+                op: BinOp::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_bitor(&mut self) -> Result<Expr, AxiomDiagnostic> {
+        let mut lhs = self.parse_bitxor()?;
+        while matches!(self.peek().kind, TokenKind::Pipe) {
+            self.advance();
+            let rhs = self.parse_bitxor()?;
+            lhs = Expr::Binary {
+                op: BinOp::BitOr,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_bitxor(&mut self) -> Result<Expr, AxiomDiagnostic> {
+        let mut lhs = self.parse_bitand()?;
+        while matches!(self.peek().kind, TokenKind::Caret) {
+            self.advance();
+            let rhs = self.parse_bitand()?;
+            lhs = Expr::Binary {
+                op: BinOp::BitXor,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_bitand(&mut self) -> Result<Expr, AxiomDiagnostic> {
+        let mut lhs = self.parse_eq()?;
+        while matches!(self.peek().kind, TokenKind::Amp) {
             self.advance();
             let rhs = self.parse_eq()?;
             lhs = Expr::Binary {
-                op: BinOp::And,
+                op: BinOp::BitAnd,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
             };
@@ -323,13 +487,32 @@ impl Parser {
     }
 
     fn parse_rel(&mut self) -> Result<Expr, AxiomDiagnostic> {
-        let mut lhs = self.parse_add()?;
+        let mut lhs = self.parse_shift()?;
         loop {
             let op = match self.peek().kind {
                 TokenKind::Lt => BinOp::Lt,
                 TokenKind::Le => BinOp::Le,
                 TokenKind::Gt => BinOp::Gt,
                 TokenKind::Ge => BinOp::Ge,
+                _ => break,
+            };
+            self.advance();
+            let rhs = self.parse_shift()?;
+            lhs = Expr::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_shift(&mut self) -> Result<Expr, AxiomDiagnostic> {
+        let mut lhs = self.parse_add()?;
+        loop {
+            let op = match self.peek().kind {
+                TokenKind::Shl => BinOp::Shl,
+                TokenKind::Shr => BinOp::Shr,
                 _ => break,
             };
             self.advance();
@@ -462,6 +645,27 @@ impl Parser {
                 let args = self.parse_arg_list()?;
                 Ok(Expr::Perform { effect, op, args })
             }
+            TokenKind::MemLoadKw => {
+                self.advance();
+                self.expect(&TokenKind::LParen, "Expected '(' after 'mem_load'")?;
+                let index = self.parse_expr()?;
+                self.expect(&TokenKind::RParen, "Expected ')' after mem_load(index)")?;
+                Ok(Expr::MemLoad {
+                    index: Box::new(index),
+                })
+            }
+            TokenKind::MemStoreKw => {
+                self.advance();
+                self.expect(&TokenKind::LParen, "Expected '(' after 'mem_store'")?;
+                let index = self.parse_expr()?;
+                self.expect(&TokenKind::Comma, "Expected ',' between mem_store index and value")?;
+                let value = self.parse_expr()?;
+                self.expect(&TokenKind::RParen, "Expected ')' after mem_store(index, value)")?;
+                Ok(Expr::MemStore {
+                    index: Box::new(index),
+                    value: Box::new(value),
+                })
+            }
             TokenKind::SecretKw => {
                 self.advance();
                 self.expect(&TokenKind::LParen, "Expected '(' after 'secret'")?;
@@ -522,7 +726,7 @@ impl Parser {
                 "parse",
                 format!("Expected expression, found {other:?}"),
                 tok.span,
-                "Provide a valid expression (literal, variable, call, block, if/else, or 'do Effect.op(...)')",
+                "Provide a valid expression (literal, variable, call, block, if/else, mem_load/mem_store, or 'do Effect.op(...)')",
             )),
         }
     }

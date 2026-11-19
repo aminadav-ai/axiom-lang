@@ -1,0 +1,34 @@
+// Demo: Axiom.Strata Direct Zero-rustc Framebuffer & Linear Memory Kernel
+// Compiles directly to W3C WebAssembly (.wasm) and Linux x86_64 ELF64 in <5ms!
+
+fn clamp_channel(v: i64) -> i64
+  ens result >= 0 && result <= 255
+{
+  if v < 0 {
+    0
+  } else {
+    if v > 255 { 255 } else { v }
+  }
+}
+
+export fn render_gradient(width: i64, height: i64, tick: i64) -[Mem]-> i64
+  req width > 0 && width <= 128 && height > 0 && height <= 128
+{
+  let mut y = 0;
+  let mut checksum = 0;
+  while y < height max 128 {
+    let mut x = 0;
+    while x < width max 128 {
+      let r = clamp_channel((x * 4 + tick) & 255);
+      let g = clamp_channel((y * 4 + tick) & 255);
+      let b = 180;
+      let rgba = (255 << 24) | (b << 16) | (g << 8) | r;
+      let idx = 1024 + y * width + x;
+      mem_store(idx, rgba);
+      checksum = checksum + ((r + g) & 15);
+      x = x + 1;
+    }
+    y = y + 1;
+  }
+  checksum
+}
