@@ -1,11 +1,11 @@
 SPDX-License-Identifier: BUSL-1.1
 
 Axiom Programming Language (`axiom-lang`)
-Copyright (c) 2026 Axiom Project Owner. All rights reserved.
+Copyright (c) 2026 Yehuda Aminadav. All rights reserved.
 
 License Parameters (Business Source License 1.1):
-- Licensor: Axiom Project Owner
-- Licensed Work: The `axiom-lang` compiler, verifier, graph store, and CLI tools
+- Licensor: Yehuda Aminadav
+- Licensed Work: The `axiom-lang` compiler, Z3 contract verifier, graph store, Wasm/native codegen, and CLI tools
 - Additional Use Grant:
   1. Personal, educational, academic, and non-commercial research use is permitted
      free of charge.
