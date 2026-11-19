@@ -1,0 +1,18 @@
+SPDX-License-Identifier: BUSL-1.1
+
+Axiom Programming Language (`axiom-lang`)
+Copyright (c) 2026 Axiom Project Owner. All rights reserved.
+
+License Parameters (Business Source License 1.1):
+- Licensor: Axiom Project Owner
+- Licensed Work: The `axiom-lang` compiler, verifier, graph store, and CLI tools
+- Additional Use Grant:
+  1. Personal, educational, academic, and non-commercial research use is permitted
+     free of charge.
+  2. Non-production evaluation and testing are permitted free of charge.
+  3. Any commercial production use, internal business deployment, or commercial
+     redistribution requires a separate paid Commercial License from the Licensor.
+- Change Date: 2030-11-19 (4 years from release publication)
+- Change License: Apache-2.0
+
+Full canonical BUSL-1.1 terms: https://spdx.org/licenses/BUSL-1.1.html

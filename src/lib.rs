@@ -6,4 +6,5 @@ pub mod diag;
 pub mod lexer;
 pub mod parser;
 pub mod store;
+pub mod typecheck;
 pub mod verify;

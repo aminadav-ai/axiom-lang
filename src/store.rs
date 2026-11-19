@@ -1,6 +1,7 @@
 use crate::ast::{EffectCap, Expr, FnDef, Module, Stmt, TargetRef, Type};
 use crate::canon::{canonicalize_fn, CanonicalNode};
 use crate::diag::{AxiomDiagnostic, Span};
+use crate::typecheck::{typecheck_node, DirectSecretSink};
 use crate::verify::{verify_node, VerificationReport};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -41,6 +42,14 @@ pub struct CapabilityGrant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretPipe {
+    pub secret_type: String,
+    pub destination_domain: String,
+    pub operation: String,
+    pub witness_chain: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityPassport {
     pub root_hash: String,
     pub short_hash: String,
@@ -49,6 +58,7 @@ pub struct SecurityPassport {
     pub is_pure: bool,
     pub uses_secret_types: bool,
     pub capabilities: Vec<CapabilityGrant>,
+    pub secret_pipes: Vec<SecretPipe>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,7 +269,7 @@ impl GraphStore {
 
         for idx in order {
             let raw_fn = &module.functions[idx];
-            let node = canonicalize_fn(
+            let mut node = canonicalize_fn(
                 raw_fn,
                 &|callee| {
                     temp_aliases.get(callee).cloned().ok_or_else(|| {
@@ -278,13 +288,16 @@ impl GraphStore {
                 &|prefix| self.resolve_hash_prefix(prefix),
             )?;
 
-            let report = verify_node(raw_fn, &node, &|dep_hash| {
+            let loader = |dep_hash: &str| -> Result<CanonicalNode, AxiomDiagnostic> {
                 if let Some(mem_node) = temp_nodes.get(dep_hash) {
                     Ok(mem_node.clone())
                 } else {
                     self.load_node(dep_hash)
                 }
-            })?;
+            };
+
+            node.direct_secret_sinks = typecheck_node(&raw_fn.name, &node, &loader)?;
+            let report = verify_node(raw_fn, &node, &loader)?;
 
             temp_aliases.insert(raw_fn.name.clone(), node.hash.clone());
             temp_nodes.insert(node.hash.clone(), node);
@@ -300,10 +313,10 @@ impl GraphStore {
         let mut staged_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
         let mut staged_entries = Vec::with_capacity(order.len());
 
-        // Phase 1: Canonicalize + formally verify ALL nodes in module via Z3 before committing!
+        // Phase 1: Canonicalize + typecheck/taint-check + formally verify via Z3 before committing!
         for idx in order {
             let raw_fn = &module.functions[idx];
-            let node = canonicalize_fn(
+            let mut node = canonicalize_fn(
                 raw_fn,
                 &|callee| {
                     staged_aliases.get(callee).cloned().ok_or_else(|| {
@@ -322,13 +335,16 @@ impl GraphStore {
                 &|prefix| self.resolve_hash_prefix(prefix),
             )?;
 
-            let vreport = verify_node(raw_fn, &node, &|dep_hash| {
+            let loader = |dep_hash: &str| -> Result<CanonicalNode, AxiomDiagnostic> {
                 if let Some(mem_node) = staged_nodes.get(dep_hash) {
                     Ok(mem_node.clone())
                 } else {
                     self.load_node(dep_hash)
                 }
-            })?;
+            };
+
+            node.direct_secret_sinks = typecheck_node(&raw_fn.name, &node, &loader)?;
+            let vreport = verify_node(raw_fn, &node, &loader)?;
 
             staged_aliases.insert(raw_fn.name.clone(), node.hash.clone());
             staged_entries.push((raw_fn.name.clone(), node.clone(), vreport));
@@ -444,6 +460,7 @@ impl GraphStore {
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
         let mut effect_witness: BTreeMap<EffectCap, Vec<String>> = BTreeMap::new();
+        let mut sink_witness: BTreeMap<DirectSecretSink, Vec<String>> = BTreeMap::new();
         let mut uses_secret = fn_uses_secret(&root_node.ast);
 
         let root_label = format_node_label(&root_node, &root_aliases);
@@ -458,6 +475,11 @@ impl GraphStore {
             for eff in &curr.direct_effects {
                 effect_witness
                     .entry(eff.clone())
+                    .or_insert_with(|| path.clone());
+            }
+            for sink in &curr.direct_secret_sinks {
+                sink_witness
+                    .entry(sink.clone())
                     .or_insert_with(|| path.clone());
             }
             for dep_hash in &curr.direct_deps {
@@ -479,6 +501,16 @@ impl GraphStore {
             })
             .collect();
 
+        let secret_pipes: Vec<SecretPipe> = sink_witness
+            .into_iter()
+            .map(|(sink, chain)| SecretPipe {
+                secret_type: sink.secret_type,
+                destination_domain: sink.domain,
+                operation: sink.operation,
+                witness_chain: chain,
+            })
+            .collect();
+
         Ok(SecurityPassport {
             root_hash,
             short_hash: root_node.short_hash,
@@ -487,6 +519,7 @@ impl GraphStore {
             is_pure: capabilities.is_empty(),
             uses_secret_types: uses_secret,
             capabilities,
+            secret_pipes,
         })
     }
 }

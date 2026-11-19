@@ -1,5 +1,6 @@
 use crate::ast::{EffectCap, Expr, FnDef, Param, Stmt, TargetRef, Type};
 use crate::diag::{AxiomDiagnostic, Span};
+use crate::typecheck::DirectSecretSink;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -11,6 +12,8 @@ pub struct CanonicalNode {
     pub ast: FnDef,
     pub direct_deps: Vec<String>,
     pub direct_effects: Vec<EffectCap>,
+    #[serde(default)]
+    pub direct_secret_sinks: Vec<DirectSecretSink>,
 }
 
 struct ScopeEnv {
@@ -173,6 +176,7 @@ where
         ast: canon_ast,
         direct_deps: deps_set.into_iter().collect(),
         direct_effects: canon_effects,
+        direct_secret_sinks: Vec::new(),
     })
 }
 
