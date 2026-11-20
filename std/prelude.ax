@@ -8,3 +8,4 @@ use "std/math.ax";
 use "std/color.ax";
 use "std/gfx.ax";
 use "std/text.ax";
+use "std/audio.ax";

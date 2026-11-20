@@ -195,6 +195,7 @@ fn resolve_embedded_std(spec: &str) -> Option<(&'static str, &'static str)> {
         "std/color" | "std/color.ax" => Some(("__std__/color.ax", include_str!("../std/color.ax"))),
         "std/gfx" | "std/gfx.ax" => Some(("__std__/gfx.ax", include_str!("../std/gfx.ax"))),
         "std/text" | "std/text.ax" => Some(("__std__/text.ax", include_str!("../std/text.ax"))),
+        "std/audio" | "std/audio.ax" => Some(("__std__/audio.ax", include_str!("../std/audio.ax"))),
         "std/prelude" | "std/prelude.ax" => {
             Some(("__std__/prelude.ax", include_str!("../std/prelude.ax")))
         }
