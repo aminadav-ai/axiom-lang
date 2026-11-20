@@ -671,7 +671,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
     ];
 
     let bit_len = (data.len() as u64).wrapping_mul(8);
-    let mut padded = Vec::with_capacity(((data.len() + 9 + 63) / 64) * 64);
+    let mut padded = Vec::with_capacity((data.len() + 9).div_ceil(64) * 64);
     padded.extend_from_slice(data);
     padded.push(0x80);
     while (padded.len() % 64) != 56 {
@@ -679,7 +679,8 @@ pub fn sha256_hex(data: &[u8]) -> String {
     }
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in padded.chunks_exact(64) {
+    let (chunks, _) = padded.as_chunks::<64>();
+    for chunk in chunks {
         let mut w = [0u32; 64];
         for (i, word) in w.iter_mut().take(16).enumerate() {
             let off = i * 4;

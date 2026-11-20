@@ -215,7 +215,7 @@
    - `layout` (авто-раскладка, явные `at`, ошибка `E062_LAYOUT_OVERLAP` при пересечении, чтение/запись в Wasm-памяти),
    - символьные литералы, `else if`, `if` без `else`, `+=`/`-=`,
    - `export-abi --rust` (проверка, что сгенерированный Rust-код валиден и компилируется `rustc --crate-type lib`).
-2. Прогони все старые и новые тесты: `cargo test` в `/home/aminadav/Projects/axiom-lang` — 100% passed.
+2. Прогони строгий CI-линтер и все тесты в `/home/aminadav/Projects/axiom-lang`: `cargo clippy --all-targets -- -D warnings` (0 warnings / 0 errors) и `cargo test` — 100% passed.
 3. Регрессионная проверка на реальной студии:
    - `target/release/axiom verify /home/aminadav/Projects/axiom-web/capsules/studio/src/axiom_studio.ax`
    - `target/release/axiom compile-wasm /home/aminadav/Projects/axiom-web/capsules/studio/src/axiom_studio.ax -o /tmp/axiom_studio_check.axw`
@@ -316,7 +316,7 @@ forma ComposerBar(x: i64, y: i64, w: i64, h: i64, theme_bg: i64, border_col: i64
   2. Намеренная ошибка переполнения `Row` → Z3 возвращает `E090_FORMA_LAYOUT_VIOLATION` с контрпримером.
   3. Намеренное схлопывание кнопки в `w <= 0` → Z3 ловит ошибку на этапе компиляции.
   4. Компиляция `examples/forma_ui_demo.ax` в `.axw` (`axiom compile-wasm`) + проверка headless-запуска через `/home/aminadav/Projects/axiom-web/target/release/axiom-web --headless-check` → `HEADLESS_OK` с реальными примитивами (`Prims > 0`) и 1 Draw Call.
-- Прогони `cargo test` и `cargo build --release` в `/home/aminadav/Projects/axiom-lang` — все тесты (sprint 1..9) зелёные.
+- Прогони `cargo clippy --all-targets -- -D warnings`, `cargo test` и `cargo build --release` в `/home/aminadav/Projects/axiom-lang` — 0 warnings и все тесты (sprint 1..9) зелёные.
 ```
 
 ---
@@ -381,7 +381,7 @@ forma ComposerBar(x: i64, y: i64, w: i64, h: i64, theme_bg: i64, border_col: i64
   5. прогоняет `cargo test` и `target/release/axiom-web --headless-check capsules/studio/axiom_studio.axw`.
 - Выполни полную проверку:
   - `axiom verify` (первый и повторный запуск с кэшем Z3 — зафиксируй ускорение в логе),
-  - `cargo test` в `/home/aminadav/Projects/axiom-web` — 100% passed (все 17+ тестов, включая `studio_capsule_selects_and_copies_chat_message_substring`, `studio_capsule_composer_scroll_image_and_chevron`, SSE-тесты агента),
+  - `cargo clippy --all-targets -- -D warnings` и `cargo test` в `/home/aminadav/Projects/axiom-web` — 0 warnings и 100% passed (все 17+ тестов, включая `studio_capsule_selects_and_copies_chat_message_substring`, `studio_capsule_composer_scroll_image_and_chevron`, SSE-тесты агента),
   - `target/release/axiom-web --headless-check capsules/studio/axiom_studio.axw` → `HEADLESS_OK`,
   - проверь размер `.axw` и число строк по модулям (подтверди, что самый большой `.ax` модуль стал в разы компактнее прежних 2 971 строк).
 ```
