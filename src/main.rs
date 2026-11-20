@@ -1,8 +1,9 @@
 #![deny(clippy::todo, clippy::unimplemented, dead_code, unused_must_use)]
 
+use axiom_lang::abi::{generate_json_abi, generate_rust_abi};
 use axiom_lang::codegen::{build_native_binary, run_native_binary};
 use axiom_lang::diag::{AxiomDiagnostic, Span};
-use axiom_lang::parser::parse_module;
+use axiom_lang::parser::parse_module_from_path;
 use axiom_lang::showcase::{build_showcase_assets, serve_showcase_http};
 use axiom_lang::store::GraphStore;
 use axiom_lang::strata_elf::{build_strata_elf_target, run_strata_elf_target};
@@ -44,16 +45,7 @@ fn run_cli(args: &[&str], json_mode: bool, no_cache: bool) -> Result<(), AxiomDi
 
     match args {
         ["verify", file_path] => {
-            let src = fs::read_to_string(file_path).map_err(|e| {
-                AxiomDiagnostic::new(
-                    "E040_FILE_READ",
-                    "cli",
-                    format!("Cannot read '{file_path}': {e}"),
-                    Span::zero(),
-                    "Provide a valid path to an .ax source file",
-                )
-            })?;
-            let module = parse_module(&src)?;
+            let module = parse_module_from_path(Path::new(file_path))?;
             let store = GraphStore::open(&cwd)?;
             let reports = store.verify_module_with_cache(&module, use_cache)?;
 
@@ -73,16 +65,7 @@ fn run_cli(args: &[&str], json_mode: bool, no_cache: bool) -> Result<(), AxiomDi
             Ok(())
         }
         ["ingest", file_path] => {
-            let src = fs::read_to_string(file_path).map_err(|e| {
-                AxiomDiagnostic::new(
-                    "E040_FILE_READ",
-                    "cli",
-                    format!("Cannot read '{file_path}': {e}"),
-                    Span::zero(),
-                    "Provide a valid path to an .ax source file",
-                )
-            })?;
-            let module = parse_module(&src)?;
+            let module = parse_module_from_path(Path::new(file_path))?;
             let mut store = GraphStore::open(&cwd)?;
             let entries = store.ingest_module_with_cache(&module, use_cache)?;
 
@@ -111,16 +94,7 @@ fn run_cli(args: &[&str], json_mode: bool, no_cache: bool) -> Result<(), AxiomDi
             Ok(())
         }
         ["compile-wasm", file_path, "-o", out_path] => {
-            let src = fs::read_to_string(file_path).map_err(|e| {
-                AxiomDiagnostic::new(
-                    "E040_FILE_READ",
-                    "cli",
-                    format!("Cannot read '{file_path}': {e}"),
-                    Span::zero(),
-                    "Provide a valid path to an .ax source file",
-                )
-            })?;
-            let module = parse_module(&src)?;
+            let module = parse_module_from_path(Path::new(file_path))?;
             let mut store = GraphStore::open(&cwd)?;
             let art = build_strata_wasm_from_module_with_cache(
                 &mut store,
@@ -141,6 +115,47 @@ fn run_cli(args: &[&str], json_mode: bool, no_cache: bool) -> Result<(), AxiomDi
                     art.build_us as f64 / 1000.0
                 );
             }
+            Ok(())
+        }
+        ["export-abi", file_path, "--rust", "-o", out_path] => {
+            let module = parse_module_from_path(Path::new(file_path))?;
+            let rust_src = generate_rust_abi(&module)?;
+            write_abi_output(Path::new(out_path), &rust_src)?;
+            if json_mode {
+                println!(
+                    "{{\"format\":\"rust\",\"out\":\"{}\",\"consts\":{},\"enums\":{},\"layouts\":{}}}",
+                    out_path,
+                    module.consts.len(),
+                    module.enums.len(),
+                    module.layouts.len()
+                );
+            } else {
+                println!(
+                    "  Exported Rust ABI -> {} ({} const(s), {} enum(s), {} layout(s))",
+                    out_path,
+                    module.consts.len(),
+                    module.enums.len(),
+                    module.layouts.len()
+                );
+            }
+            Ok(())
+        }
+        ["export-abi", file_path, "--rust"] => {
+            let module = parse_module_from_path(Path::new(file_path))?;
+            let rust_src = generate_rust_abi(&module)?;
+            print!("{rust_src}");
+            Ok(())
+        }
+        ["export-abi", file_path, "-o", out_path] if json_mode => {
+            let module = parse_module_from_path(Path::new(file_path))?;
+            let json_src = generate_json_abi(&module)?;
+            write_abi_output(Path::new(out_path), &json_src)?;
+            Ok(())
+        }
+        ["export-abi", file_path] if json_mode => {
+            let module = parse_module_from_path(Path::new(file_path))?;
+            let json_src = generate_json_abi(&module)?;
+            println!("{json_src}");
             Ok(())
         }
         ["build-strata-wasm", target, "-o", out_path] => {
@@ -419,9 +434,26 @@ fn run_cli(args: &[&str], json_mode: bool, no_cache: bool) -> Result<(), AxiomDi
             "cli",
             "Invalid CLI arguments",
             Span::zero(),
-            "Usage: axiom <verify <f.ax> | ingest <f.ax> | compile-wasm <f.ax> -o <out.wasm> | build-strata-wasm <ref> -o <out.wasm> | build-strata-elf <ref> -o <out> | run-strata <ref> [args...] | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json] [--no-cache]",
+            "Usage: axiom <verify <f.ax> | ingest <f.ax> | compile-wasm <f.ax> -o <out.wasm> | export-abi <f.ax> --rust [-o <out.rs>] | build-strata-wasm <ref> -o <out.wasm> | build-strata-elf <ref> -o <out> | run-strata <ref> [args...] | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json] [--no-cache]",
         )),
     }
+}
+
+fn write_abi_output(out_path: &Path, content: &str) -> Result<(), AxiomDiagnostic> {
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = fs::create_dir_all(parent);
+        }
+    }
+    fs::write(out_path, content).map_err(|e| {
+        AxiomDiagnostic::new(
+            "E066_ABI_IO",
+            "export-abi",
+            format!("Failed to write ABI file '{}': {e}", out_path.display()),
+            Span::zero(),
+            "Check write permissions on target path",
+        )
+    })
 }
 
 fn print_build_artifact(art: &axiom_lang::codegen::BuildArtifact, json_mode: bool) {

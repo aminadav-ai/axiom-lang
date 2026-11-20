@@ -4,6 +4,11 @@ use crate::diag::{AxiomDiagnostic, Span};
 pub enum TokenKind {
     // Keywords
     Export,
+    Use,
+    Const,
+    Enum,
+    Layout,
+    Match,
     Fn,
     Let,
     Mut,
@@ -32,14 +37,23 @@ pub enum TokenKind {
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     EffectOpen,  // -[
     EffectClose, // ]->
     Arrow,       // ->
+    FatArrow,    // =>
+    ColonColon,  // ::
     Colon,
     Comma,
     Semi,
     Dot,
-    Assign, // =
+    Assign,  // =
+    PlusEq,  // +=
+    MinusEq, // -=
+    StarEq,  // *=
+    PipeEq,  // |=
+    AmpEq,   // &=
 
     // Operators
     Plus,
@@ -126,6 +140,20 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             Some(TokenKind::EffectOpen)
         } else if src[pos..].starts_with("->") {
             Some(TokenKind::Arrow)
+        } else if src[pos..].starts_with("=>") {
+            Some(TokenKind::FatArrow)
+        } else if src[pos..].starts_with("::") {
+            Some(TokenKind::ColonColon)
+        } else if src[pos..].starts_with("+=") {
+            Some(TokenKind::PlusEq)
+        } else if src[pos..].starts_with("-=") {
+            Some(TokenKind::MinusEq)
+        } else if src[pos..].starts_with("*=") {
+            Some(TokenKind::StarEq)
+        } else if src[pos..].starts_with("|=") {
+            Some(TokenKind::PipeEq)
+        } else if src[pos..].starts_with("&=") {
+            Some(TokenKind::AmpEq)
         } else if src[pos..].starts_with("==") {
             Some(TokenKind::EqEq)
         } else if src[pos..].starts_with("!=") {
@@ -187,6 +215,115 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             }
             tokens.push(Token {
                 kind: TokenKind::HashRef(hex.to_ascii_lowercase()),
+                span: Span {
+                    start,
+                    end: pos,
+                    line: start_line,
+                    col: start_col,
+                },
+            });
+            continue;
+        }
+
+        // Character literal: 'a', '\n', '\t', '\r', '\\', '\'', '\0', or any UTF-8 scalar -> i64 codepoint
+        if ch == '\'' {
+            pos += 1;
+            col += 1;
+            if pos >= len {
+                return Err(AxiomDiagnostic::new(
+                    "E005_INVALID_CHAR_LIT",
+                    "lex",
+                    "Unterminated character literal",
+                    Span {
+                        start,
+                        end: pos,
+                        line: start_line,
+                        col: start_col,
+                    },
+                    "Write a single character literal enclosed in single quotes, e.g. 'a' or '\\n'",
+                ));
+            }
+            let c = src[pos..].chars().next().unwrap();
+            let resolved_ch = if c == '\\' {
+                pos += 1;
+                col += 1;
+                if pos >= len {
+                    return Err(AxiomDiagnostic::new(
+                        "E005_INVALID_CHAR_LIT",
+                        "lex",
+                        "Unterminated escape sequence in character literal",
+                        Span {
+                            start,
+                            end: pos,
+                            line: start_line,
+                            col: start_col,
+                        },
+                        "Use a valid escape sequence: '\\n', '\\t', '\\r', '\\\\', '\\'', '\\\"', or '\\0'",
+                    ));
+                }
+                let esc = src[pos..].chars().next().unwrap();
+                pos += esc.len_utf8();
+                col += 1;
+                match esc {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    '\\' => '\\',
+                    '\'' => '\'',
+                    '"' => '"',
+                    '0' => '\0',
+                    other => {
+                        return Err(AxiomDiagnostic::new(
+                            "E005_INVALID_CHAR_LIT",
+                            "lex",
+                            format!("Unknown escape sequence '\\{other}' in character literal"),
+                            Span {
+                                start,
+                                end: pos,
+                                line: start_line,
+                                col: start_col,
+                            },
+                            "Use a supported escape sequence: '\\n', '\\t', '\\r', '\\\\', '\\'', '\\\"', or '\\0'",
+                        ));
+                    }
+                }
+            } else if c == '\'' || c == '\n' {
+                return Err(AxiomDiagnostic::new(
+                    "E005_INVALID_CHAR_LIT",
+                    "lex",
+                    "Empty or unescaped newline in character literal",
+                    Span {
+                        start,
+                        end: pos,
+                        line: start_line,
+                        col: start_col,
+                    },
+                    "Provide a single character inside quotes (use '\\n' for newline)",
+                ));
+            } else {
+                pos += c.len_utf8();
+                col += 1;
+                c
+            };
+
+            if pos >= len || bytes[pos] != b'\'' {
+                return Err(AxiomDiagnostic::new(
+                    "E005_INVALID_CHAR_LIT",
+                    "lex",
+                    "Character literal must contain exactly one character and close with '\\''",
+                    Span {
+                        start,
+                        end: pos,
+                        line: start_line,
+                        col: start_col,
+                    },
+                    "Close the character literal with a single quote '\\'' (e.g. 'a')",
+                ));
+            }
+            pos += 1;
+            col += 1;
+            tokens.push(Token {
+                kind: TokenKind::Int(resolved_ch as u32 as i64),
                 span: Span {
                     start,
                     end: pos,
@@ -344,6 +481,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             let word = &src[start..pos];
             let kind = match word {
                 "export" => TokenKind::Export,
+                "use" => TokenKind::Use,
+                "const" => TokenKind::Const,
+                "enum" => TokenKind::Enum,
+                "layout" => TokenKind::Layout,
+                "match" => TokenKind::Match,
                 "fn" => TokenKind::Fn,
                 "let" => TokenKind::Let,
                 "mut" => TokenKind::Mut,
@@ -380,6 +522,8 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, AxiomDiagnostic> {
             ')' => Some(TokenKind::RParen),
             '{' => Some(TokenKind::LBrace),
             '}' => Some(TokenKind::RBrace),
+            '[' => Some(TokenKind::LBracket),
+            ']' => Some(TokenKind::RBracket),
             ':' => Some(TokenKind::Colon),
             ',' => Some(TokenKind::Comma),
             ';' => Some(TokenKind::Semi),

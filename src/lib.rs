@@ -1,5 +1,6 @@
 #![deny(clippy::todo, clippy::unimplemented, dead_code, unused_must_use)]
 
+pub mod abi;
 pub mod ast;
 pub mod canon;
 pub mod codegen;

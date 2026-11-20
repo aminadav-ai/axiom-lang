@@ -194,7 +194,54 @@ pub struct FnDef {
     pub body: Expr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum ConstValue {
+    Int(i64),
+    Bool(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstDef {
+    pub name: String,
+    pub ty: Type,
+    pub value: ConstValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariant {
+    pub name: String,
+    pub value: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutField {
+    pub name: String,
+    pub offset: i64,
+    pub len: i64,
+    pub is_array: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutDef {
+    pub name: String,
+    pub base: i64,
+    pub fields: Vec<LayoutField>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Module {
+    #[serde(default)]
+    pub consts: Vec<ConstDef>,
+    #[serde(default)]
+    pub enums: Vec<EnumDef>,
+    #[serde(default)]
+    pub layouts: Vec<LayoutDef>,
     pub functions: Vec<FnDef>,
 }
