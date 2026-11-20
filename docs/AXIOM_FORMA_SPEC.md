@@ -33,9 +33,9 @@ EffectArrow    := "-[" EffectList? "]->" | "->"
 FormaNode   := NodeKind [ "(" PropList? ")" ] [ "{" FormaNode* "}" ]
 
 NodeKind    := "Box" | "Col" | "Row" | "Stack" | "Scroll" | "Overlay"
-             | "Button" | "Dropdown" | "Spacer" | "Divider" | "Rect" | "Slot"
+             | "Button" | "Dropdown" | "Spacer" | "Divider" | "Rect" | "Slot" | "Text"
 
-PropList    := Prop ("," Prop)* ","?
+PropList    := [ StrLit ","? ] Prop ("," Prop)* ","?
 Prop        := PropName ":" PropValue
 
 PropName    := "x" | "y" | "w" | "h" | "min_w" | "min_h" | "grow"
@@ -43,6 +43,7 @@ PropName    := "x" | "y" | "w" | "h" | "min_w" | "min_h" | "grow"
              | "bg" | "hover_bg" | "border" | "border_col" | "radius" | "shadow"
              | "clip" | "id" | "on_click" | "visible"
              | "render" | "on_wheel"
+             | "text" | "size" | "style" | "color"
 
 AlignVal    := "start" | "center" | "end" | "stretch"
 ```

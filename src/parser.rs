@@ -189,21 +189,110 @@ struct RawFile {
 // Public Entry Points
 // ---------------------------------------------------------------------------
 
-pub fn parse_module(src: &str) -> Result<Module, AxiomDiagnostic> {
-    let raw = parse_raw_file(src)?;
-    if let Some(u) = raw.uses.first() {
+fn resolve_embedded_std(spec: &str) -> Option<(&'static str, &'static str)> {
+    match spec {
+        "std/math" | "std/math.ax" => Some(("__std__/math.ax", include_str!("../std/math.ax"))),
+        "std/color" | "std/color.ax" => Some(("__std__/color.ax", include_str!("../std/color.ax"))),
+        "std/gfx" | "std/gfx.ax" => Some(("__std__/gfx.ax", include_str!("../std/gfx.ax"))),
+        "std/text" | "std/text.ax" => Some(("__std__/text.ax", include_str!("../std/text.ax"))),
+        "std/prelude" | "std/prelude.ax" => {
+            Some(("__std__/prelude.ax", include_str!("../std/prelude.ax")))
+        }
+        _ => None,
+    }
+}
+
+fn load_std_recursive(
+    spec: &str,
+    use_span: Span,
+    visiting: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+    all_items: &mut Vec<RawItem>,
+    all_formas: &mut Vec<crate::forma::FormaDef<RawExpr>>,
+    all_fns: &mut Vec<RawFnDef>,
+) -> Result<(), AxiomDiagnostic> {
+    let Some((virtual_key, src)) = resolve_embedded_std(spec) else {
         return Err(AxiomDiagnostic::new(
-            "E018_USE_WITHOUT_PATH",
+            "E040_FILE_READ",
             "parse",
-            format!(
-                "Cannot resolve 'use \"{}\"' without a source file path",
-                u.path
-            ),
-            u.span,
-            "Load multi-file modules with parse_module_from_path(entry_path) or CLI file commands",
+            format!("Unknown built-in Axiom stdlib module '{spec}'"),
+            use_span,
+            "Available stdlib modules: std/prelude.ax, std/math.ax, std/color.ax, std/gfx.ax, std/text.ax",
+        ));
+    };
+    let canon = PathBuf::from(virtual_key);
+    if visiting.iter().any(|p| p == &canon) {
+        return Err(AxiomDiagnostic::new(
+            "E019_IMPORT_CYCLE",
+            "parse",
+            format!("Circular stdlib import detected: {virtual_key}"),
+            use_span,
+            "Break the import cycle",
         ));
     }
-    resolve_and_lower(raw.items, raw.formas, raw.functions)
+    if visited.contains(&canon) {
+        return Ok(());
+    }
+    let raw = parse_raw_file(src)?;
+    visiting.push(canon.clone());
+    for u in &raw.uses {
+        load_std_recursive(
+            &u.path,
+            u.span,
+            visiting,
+            visited,
+            all_items,
+            all_formas,
+            all_fns,
+        )?;
+    }
+    visiting.pop();
+    visited.insert(canon);
+
+    all_items.extend(raw.items);
+    all_formas.extend(raw.formas);
+    all_fns.extend(raw.functions);
+    Ok(())
+}
+
+pub fn parse_module(src: &str) -> Result<Module, AxiomDiagnostic> {
+    let raw = parse_raw_file(src)?;
+    if raw.uses.is_empty() {
+        return resolve_and_lower(raw.items, raw.formas, raw.functions);
+    }
+    let mut visiting: Vec<PathBuf> = Vec::new();
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut all_items: Vec<RawItem> = Vec::new();
+    let mut all_formas: Vec<crate::forma::FormaDef<RawExpr>> = Vec::new();
+    let mut all_fns: Vec<RawFnDef> = Vec::new();
+    for u in &raw.uses {
+        if u.path.starts_with("std/") {
+            load_std_recursive(
+                &u.path,
+                u.span,
+                &mut visiting,
+                &mut visited,
+                &mut all_items,
+                &mut all_formas,
+                &mut all_fns,
+            )?;
+        } else {
+            return Err(AxiomDiagnostic::new(
+                "E018_USE_WITHOUT_PATH",
+                "parse",
+                format!(
+                    "Cannot resolve 'use \"{}\"' without a source file path",
+                    u.path
+                ),
+                u.span,
+                "Load multi-file modules with parse_module_from_path(entry_path) or CLI file commands",
+            ));
+        }
+    }
+    all_items.extend(raw.items);
+    all_formas.extend(raw.formas);
+    all_fns.extend(raw.functions);
+    resolve_and_lower(all_items, all_formas, all_fns)
 }
 
 /// Load and parse a multi-file Axiom module starting at `entry_path`.
@@ -284,16 +373,28 @@ fn load_file_recursive(
 
     visiting.push(canon.clone());
     for u in &raw.uses {
-        let dep_path = base_dir.join(&u.path);
-        load_file_recursive(
-            &dep_path,
-            u.span,
-            visiting,
-            visited,
-            all_items,
-            all_formas,
-            all_fns,
-        )?;
+        if u.path.starts_with("std/") {
+            load_std_recursive(
+                &u.path,
+                u.span,
+                visiting,
+                visited,
+                all_items,
+                all_formas,
+                all_fns,
+            )?;
+        } else {
+            let dep_path = base_dir.join(&u.path);
+            load_file_recursive(
+                &dep_path,
+                u.span,
+                visiting,
+                visited,
+                all_items,
+                all_formas,
+                all_fns,
+            )?;
+        }
     }
     visiting.pop();
     visited.insert(canon);

@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom Standard Library: std/gfx.ax
+// Standard 1-Draw-Call GPU primitive emitters for axiom-web (Vulkan/wgpu).
+// Uses fixed protocol memory slots:
+//   word 12       = prim_count
+//   word 48000..  = clip_rects (16 x 4 words, byte offset 192000)
+//   word 65536..  = gpu_prims  (80000 x 8 words, byte offset 262144)
+
+use "std/math.ax";
+use "std/color.ax";
+
+const GPU_CMD_BYTE_OFFSET: i64 = 262144;
+const GPU_CLIPS_BYTE_OFFSET: i64 = 192000;
+const STD_MAX_GPU_PRIMS: i64 = 80000;
+const STD_PRIM_COUNT_WORD: i64 = 12;
+const STD_CLIP_RECTS_WORD: i64 = 48000;
+const STD_GPU_PRIMS_WORD: i64 = 65536;
+
+fn set_clip_rect(cid: i64, x0: i64, y0: i64, x1: i64, y1: i64) -[Mem]-> unit {
+  if cid >= 0 && cid < 16 {
+    let b = STD_CLIP_RECTS_WORD + cid * 4;
+    mem_store(b, x0);
+    mem_store(b + 1, y0);
+    mem_store(b + 2, x1);
+    mem_store(b + 3, y1);
+  }
+}
+
+fn push_prim(w0: i64, w1: i64, w2: i64, w3: i64, pmeta: i64, col1: i64, col2: i64, clip_id: i64) -[Mem]-> unit {
+  let idx = mem_load(STD_PRIM_COUNT_WORD);
+  if idx >= 0 && idx < STD_MAX_GPU_PRIMS {
+    let b = STD_GPU_PRIMS_WORD + idx * 8;
+    mem_store(b, w0);
+    mem_store(b + 1, w1);
+    mem_store(b + 2, w2);
+    mem_store(b + 3, w3);
+    mem_store(b + 4, pmeta);
+    mem_store(b + 5, col1);
+    mem_store(b + 6, col2);
+    mem_store(b + 7, clip_id & 15);
+    mem_store(STD_PRIM_COUNT_WORD, idx + 1);
+  }
+}
+
+fn ui_rect(x: i64, y: i64, w: i64, h: i64, radius: i64, border_px: i64, shadow_px: i64, fill_rgba: i64, border_rgba: i64, clip: i64) -[Mem]-> unit {
+  if w > 0 && h > 0 {
+    let r = clamp_i64(radius, 0, 120);
+    let bw = clamp_i64(border_px, 0, 15);
+    let sh = clamp_i64(shadow_px, 0, 60);
+    push_prim(x, y, w, h, 0 | (r << 4) | (bw << 12) | (sh << 16), fill_rgba, border_rgba, clip);
+  }
+}
+
+fn ui_line(x0: i64, y0: i64, x1: i64, y1: i64, thickness: i64, rgba: i64, clip: i64) -[Mem]-> unit {
+  let th = clamp_i64(thickness, 1, 24);
+  push_prim(x0, y0, x1, y1, 2 | (th << 4), rgba, 0, clip);
+}
+
+fn ui_circle(cx: i64, cy: i64, r_out: i64, r_in: i64, rgba: i64, clip: i64) -[Mem]-> unit {
+  if r_out > 0 {
+    push_prim(cx, cy, r_out, clamp_i64(r_in, 0, r_out), 3, rgba, 0, clip);
+  }
+}
+
+// Hardware-accelerated Gradient Rounded Rect (kind = 5)
+// mode: 0 = vertical (top->bottom), 1 = horizontal (left->right), 2 = diagonal, 3 = radial
+fn ui_grad_rect(x: i64, y: i64, w: i64, h: i64, radius: i64, mode: i64, shadow_px: i64, col1: i64, col2: i64, clip: i64) -[Mem]-> unit {
+  if w > 0 && h > 0 {
+    let r = clamp_i64(radius, 0, 120);
+    let m = clamp_i64(mode, 0, 3);
+    let sh = clamp_i64(shadow_px, 0, 60);
+    push_prim(x, y, w, h, 5 | (r << 4) | (m << 12) | (sh << 16), col1, col2, clip);
+  }
+}
+
+// Hardware-accelerated 3D PBR Raymarched Sphere (kind = 6)
+// material: 0 = Glass/Crystal Jewel (caustics + Fresnel), 1 = Metallic/Chrome, 2 = Marble/Ceramic
+// roughness: 0..15 (lower = sharper specular highlight), shadow_px: 0..60
+fn ui_sphere_3d(cx: i64, cy: i64, radius: i64, material: i64, roughness: i64, shadow_px: i64, base_rgba: i64, rim_rgba: i64, clip: i64) -[Mem]-> unit {
+  if radius > 0 {
+    let mat = clamp_i64(material, 0, 2);
+    let rgh = clamp_i64(roughness, 0, 15);
+    let sh = clamp_i64(shadow_px, 0, 60);
+    push_prim(cx, cy, radius, 0, 6 | (mat << 4) | (rgh << 8) | (sh << 16), base_rgba, rim_rgba, clip);
+  }
+}
+
+// 1-primitive 3D PBR Crystal Jewel Orb (with caustics, specular highlight, Fresnel rim & soft contact shadow)
+fn ui_orb(cx: i64, cy: i64, radius: i64, base_rgba: i64, clip: i64) -[Mem]-> unit {
+  if radius > 0 {
+    ui_sphere_3d(cx, cy, radius, 0, 2, 10, base_rgba, 0, clip);
+  }
+}
+
+// Hardware-accelerated Soft Radial Glow / Light Halo (kind = 7)
+// falloff_x10: 10..60 (20 = smooth quadratic falloff, 30 = tighter bloom)
+fn ui_glow(cx: i64, cy: i64, radius: i64, falloff_x10: i64, core_rgba: i64, outer_rgba: i64, clip: i64) -[Mem]-> unit {
+  if radius > 0 {
+    let f = clamp_i64(falloff_x10, 8, 60);
+    push_prim(cx, cy, radius, f, 7, core_rgba, outer_rgba, clip);
+  }
+}
+
+fn pack_s16_xy(x: i64, y: i64) -> i64 {
+  let sx = clamp_i64(x, -32768, 32767) & 65535;
+  let sy = clamp_i64(y, -32768, 32767) & 65535;
+  sx | (sy << 16)
+}
+
+// Hardware-accelerated Anti-Aliased Shaded 3D Triangle (kind = 8)
+// light_1000: 0 = unlit, 1000 = 1.0x brightness, >1000 = specular boost
+fn ui_tri(x0: i64, y0: i64, x1: i64, y1: i64, x2: i64, y2: i64, col1: i64, col2: i64, light_1000: i64, clip: i64) -[Mem]-> unit {
+  let w0 = pack_s16_xy(x0, y0);
+  let w1 = pack_s16_xy(x1, y1);
+  let w2 = pack_s16_xy(x2, y2);
+  let lit = clamp_i64(light_1000, 0, 2000);
+  push_prim(w0, w1, w2, lit, 8, col1, col2, clip);
+}

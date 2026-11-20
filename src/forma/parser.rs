@@ -116,7 +116,7 @@ fn parse_forma_node<P: FormaHostParser>(p: &mut P) -> Result<FormaNode<P::Expr>,
             "forma-parse",
             format!("Unknown Forma node kind '{kind_name}'"),
             span,
-            "Use one of: Box, Col, Row, Stack, Scroll, Overlay, Button, Dropdown, Spacer, Divider, Rect, Slot",
+            "Use one of: Box, Col, Row, Stack, Scroll, Overlay, Button, Dropdown, Spacer, Divider, Rect, Slot, Text",
         )
     })?;
 
@@ -146,6 +146,14 @@ fn parse_forma_node<P: FormaHostParser>(p: &mut P) -> Result<FormaNode<P::Expr>,
 fn parse_forma_props<P: FormaHostParser>(p: &mut P) -> Result<FormaProps<P::Expr>, AxiomDiagnostic> {
     expect_tok(p, &TokenKind::LParen, "'('")?;
     let mut props = FormaProps::default();
+
+    // Support shorthand positional string literal as first argument: `Text("Hello", size: 24, ...)`
+    if matches!(p.peek().kind, TokenKind::Str(_)) {
+        props.text = Some(p.parse_expr()?);
+        if p.peek().kind == TokenKind::Comma {
+            p.advance();
+        }
+    }
 
     while p.peek().kind != TokenKind::RParen && p.peek().kind != TokenKind::Eof {
         let prop_span = p.peek().span;
@@ -196,13 +204,17 @@ fn parse_forma_props<P: FormaHostParser>(p: &mut P) -> Result<FormaProps<P::Expr
                 let fn_name = p.expect_ident("Slot on_wheel function name")?;
                 props.on_wheel = Some(fn_name);
             }
+            "text" => props.text = Some(p.parse_expr()?),
+            "size" => props.size = Some(p.parse_expr()?),
+            "style" => props.style = Some(p.parse_expr()?),
+            "color" => props.color = Some(p.parse_expr()?),
             other => {
                 return Err(AxiomDiagnostic::new(
                     "E091_FORMA_SYNTAX",
                     "forma-parse",
                     format!("Unknown Forma property '{other}'"),
                     prop_span,
-                    "Supported properties: x, y, w, h, min_w, min_h, grow, pad, pad_x, pad_y, gap, align, bg, hover_bg, border, border_col, radius, shadow, clip, id, on_click, visible, render, on_wheel",
+                    "Supported properties: x, y, w, h, min_w, min_h, grow, pad, pad_x, pad_y, gap, align, bg, hover_bg, border, border_col, radius, shadow, clip, id, on_click, visible, render, on_wheel, text, size, style, color",
                 ));
             }
         }

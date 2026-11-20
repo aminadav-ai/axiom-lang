@@ -46,6 +46,7 @@ pub enum FormaNodeKind {
     Divider,
     Rect,
     Slot,
+    Text,
 }
 
 impl FormaNodeKind {
@@ -63,6 +64,7 @@ impl FormaNodeKind {
             "Divider" => Some(Self::Divider),
             "Rect" => Some(Self::Rect),
             "Slot" => Some(Self::Slot),
+            "Text" => Some(Self::Text),
             _ => None,
         }
     }
@@ -81,6 +83,7 @@ impl FormaNodeKind {
             Self::Divider => "Divider",
             Self::Rect => "Rect",
             Self::Slot => "Slot",
+            Self::Text => "Text",
         }
     }
 
@@ -125,6 +128,10 @@ pub struct FormaProps<E = Expr> {
     pub visible: Option<E>,
     pub render: Option<String>,
     pub on_wheel: Option<String>,
+    pub text: Option<E>,
+    pub size: Option<E>,
+    pub style: Option<E>,
+    pub color: Option<E>,
 }
 
 impl<E> Default for FormaProps<E> {
@@ -154,6 +161,10 @@ impl<E> Default for FormaProps<E> {
             visible: None,
             render: None,
             on_wheel: None,
+            text: None,
+            size: None,
+            style: None,
+            color: None,
         }
     }
 }
@@ -196,6 +207,10 @@ impl<E> FormaProps<E> {
             visible: self.visible.map(&mut *f).transpose()?,
             render: self.render,
             on_wheel: self.on_wheel,
+            text: self.text.map(&mut *f).transpose()?,
+            size: self.size.map(&mut *f).transpose()?,
+            style: self.style.map(&mut *f).transpose()?,
+            color: self.color.map(&mut *f).transpose()?,
         })
     }
 }
@@ -233,6 +248,7 @@ impl<E> FormaNode<E> {
             FormaNodeKind::Spacer => 0,
             FormaNodeKind::Divider | FormaNodeKind::Rect => 1,
             FormaNodeKind::Slot => 64,
+            FormaNodeKind::Text => 256 + usize::from(self.props.has_visual_rect()),
             FormaNodeKind::Box
             | FormaNodeKind::Col
             | FormaNodeKind::Row

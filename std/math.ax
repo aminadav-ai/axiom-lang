@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom Standard Library: std/math.ax
+// Pure Z3-verified integer math, clamping, fixed-point easing (0..1000), geometry, and RNG.
+
+fn clamp_i64(v: i64, lo: i64, hi: i64) -> i64
+  req lo <= hi
+  ens result >= lo && result <= hi
+{
+  if v < lo { lo } else if v > hi { hi } else { v }
+}
+
+fn clamp_byte(v: i64) -> i64
+  ens result >= 0 && result <= 255
+{
+  if v < 0 { 0 } else if v > 255 { 255 } else { v }
+}
+
+fn min_i64(a: i64, b: i64) -> i64
+  ens result <= a && result <= b
+{
+  if a < b { a } else { b }
+}
+
+fn max_i64(a: i64, b: i64) -> i64
+  ens result >= a && result >= b
+{
+  if a > b { a } else { b }
+}
+
+fn abs_i64(v: i64) -> i64
+  ens result >= 0
+{
+  if v < 0 { -v } else { v }
+}
+
+fn point_in_rect(px: i64, py: i64, rx: i64, ry: i64, rw: i64, rh: i64) -> bool {
+  px >= rx && px < rx + rw && py >= ry && py < ry + rh
+}
+
+fn lerp_i64(a: i64, b: i64, t1000: i64) -> i64 {
+  let t = clamp_i64(t1000, 0, 1000);
+  a + ((b - a) * t) / 1000
+}
+
+fn ease_out_quad(t1000: i64) -> i64
+  ens result >= 0 && result <= 1000
+{
+  let t = clamp_i64(t1000, 0, 1000);
+  let inv = 1000 - t;
+  clamp_i64(1000 - (inv * inv) / 1000, 0, 1000)
+}
+
+fn ease_out_cubic(t1000: i64) -> i64
+  ens result >= 0 && result <= 1000
+{
+  let t = clamp_i64(t1000, 0, 1000);
+  let inv = 1000 - t;
+  let inv2 = (inv * inv) / 1000;
+  let inv3 = (inv2 * inv) / 1000;
+  clamp_i64(1000 - inv3, 0, 1000)
+}
+
+fn ease_in_out_quad(t1000: i64) -> i64
+  ens result >= 0 && result <= 1000
+{
+  let t = clamp_i64(t1000, 0, 1000);
+  if t < 500 {
+    clamp_i64((2 * t * t) / 1000, 0, 1000)
+  } else {
+    let inv = 1000 - t;
+    clamp_i64(1000 - (2 * inv * inv) / 1000, 0, 1000)
+  }
+}
+
+fn rng_next(seed: i64) -> i64 {
+  let s = (seed * 1103515245 + 12345) & 2147483647;
+  if s == 0 { 1234567 } else { s }
+}
+
+fn rng_range(seed: i64, bound: i64) -> i64
+  req bound > 0
+  ens result >= 0 && result < bound
+{
+  let v = abs_i64(seed) % bound;
+  clamp_i64(v, 0, bound - 1)
+}

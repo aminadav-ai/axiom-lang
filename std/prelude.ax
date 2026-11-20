@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom Standard Library: std/prelude.ax
+// Single-import convenience prelude for Axiom Lang + axiom-web applications.
+
+use "std/math.ax";
+use "std/color.ax";
+use "std/gfx.ax";
+use "std/text.ax";
