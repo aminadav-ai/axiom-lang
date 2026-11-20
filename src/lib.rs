@@ -5,6 +5,7 @@ pub mod ast;
 pub mod canon;
 pub mod codegen;
 pub mod diag;
+pub mod forma;
 pub mod lexer;
 pub mod parser;
 pub mod showcase;

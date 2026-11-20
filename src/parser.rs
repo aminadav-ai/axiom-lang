@@ -57,7 +57,7 @@ enum RawItem {
     Layout(RawLayout),
 }
 
-enum RawMatchPattern {
+pub(crate) enum RawMatchPattern {
     Wildcard(Span),
     Int(i64),
     Bool(bool),
@@ -66,12 +66,12 @@ enum RawMatchPattern {
     Path3(String, String, String, Span),
 }
 
-struct RawMatchArm {
+pub(crate) struct RawMatchArm {
     patterns: Vec<RawMatchPattern>,
     body: RawExpr,
 }
 
-enum RawStmt {
+pub(crate) enum RawStmt {
     Let {
         name: String,
         mutable: bool,
@@ -99,7 +99,7 @@ enum RawStmt {
     Expr(RawExpr),
 }
 
-enum RawExpr {
+pub(crate) enum RawExpr {
     IntLit(i64),
     BoolLit(bool),
     StrLit(String),
@@ -181,6 +181,7 @@ struct RawFnDef {
 struct RawFile {
     uses: Vec<RawUse>,
     items: Vec<RawItem>,
+    formas: Vec<crate::forma::FormaDef<RawExpr>>,
     functions: Vec<RawFnDef>,
 }
 
@@ -202,7 +203,7 @@ pub fn parse_module(src: &str) -> Result<Module, AxiomDiagnostic> {
             "Load multi-file modules with parse_module_from_path(entry_path) or CLI file commands",
         ));
     }
-    resolve_and_lower(raw.items, raw.functions)
+    resolve_and_lower(raw.items, raw.formas, raw.functions)
 }
 
 /// Load and parse a multi-file Axiom module starting at `entry_path`.
@@ -214,6 +215,7 @@ pub fn parse_module_from_path(entry_path: &Path) -> Result<Module, AxiomDiagnost
     let mut visiting: Vec<PathBuf> = Vec::new();
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut all_items: Vec<RawItem> = Vec::new();
+    let mut all_formas: Vec<crate::forma::FormaDef<RawExpr>> = Vec::new();
     let mut all_fns: Vec<RawFnDef> = Vec::new();
 
     load_file_recursive(
@@ -222,10 +224,11 @@ pub fn parse_module_from_path(entry_path: &Path) -> Result<Module, AxiomDiagnost
         &mut visiting,
         &mut visited,
         &mut all_items,
+        &mut all_formas,
         &mut all_fns,
     )?;
 
-    resolve_and_lower(all_items, all_fns)
+    resolve_and_lower(all_items, all_formas, all_fns)
 }
 
 fn load_file_recursive(
@@ -234,6 +237,7 @@ fn load_file_recursive(
     visiting: &mut Vec<PathBuf>,
     visited: &mut HashSet<PathBuf>,
     all_items: &mut Vec<RawItem>,
+    all_formas: &mut Vec<crate::forma::FormaDef<RawExpr>>,
     all_fns: &mut Vec<RawFnDef>,
 ) -> Result<(), AxiomDiagnostic> {
     let canon = fs::canonicalize(path).map_err(|e| {
@@ -281,12 +285,21 @@ fn load_file_recursive(
     visiting.push(canon.clone());
     for u in &raw.uses {
         let dep_path = base_dir.join(&u.path);
-        load_file_recursive(&dep_path, u.span, visiting, visited, all_items, all_fns)?;
+        load_file_recursive(
+            &dep_path,
+            u.span,
+            visiting,
+            visited,
+            all_items,
+            all_formas,
+            all_fns,
+        )?;
     }
     visiting.pop();
     visited.insert(canon);
 
     all_items.extend(raw.items);
+    all_formas.extend(raw.formas);
     all_fns.extend(raw.functions);
     Ok(())
 }
@@ -296,6 +309,7 @@ fn parse_raw_file(src: &str) -> Result<RawFile, AxiomDiagnostic> {
     let mut parser = Parser { tokens, idx: 0 };
     let mut uses = Vec::new();
     let mut items = Vec::new();
+    let mut formas = Vec::new();
     let mut functions = Vec::new();
 
     while !parser.at_eof() {
@@ -304,6 +318,13 @@ fn parse_raw_file(src: &str) -> Result<RawFile, AxiomDiagnostic> {
             TokenKind::Const => items.push(RawItem::Const(parser.parse_const()?)),
             TokenKind::Enum => items.push(RawItem::Enum(parser.parse_enum()?)),
             TokenKind::Layout => items.push(RawItem::Layout(parser.parse_layout()?)),
+            TokenKind::Forma => {
+                formas.push(crate::forma::parser::parse_forma_def(&mut parser, false)?)
+            }
+            TokenKind::Export if matches!(parser.peek_next(), TokenKind::Forma) => {
+                parser.advance();
+                formas.push(crate::forma::parser::parse_forma_def(&mut parser, true)?)
+            }
             _ => functions.push(parser.parse_fn()?),
         }
     }
@@ -311,6 +332,7 @@ fn parse_raw_file(src: &str) -> Result<RawFile, AxiomDiagnostic> {
     Ok(RawFile {
         uses,
         items,
+        formas,
         functions,
     })
 }
@@ -2486,8 +2508,122 @@ fn const_overflow(op: &str, span: Span) -> AxiomDiagnostic {
     )
 }
 
+impl crate::forma::parser::FormaHostParser for Parser {
+    type Expr = RawExpr;
+
+    fn peek(&self) -> &Token {
+        Parser::peek(self)
+    }
+
+    fn advance(&mut self) -> Token {
+        Parser::advance(self)
+    }
+
+    fn expect_ident(&mut self, what: &str) -> Result<String, AxiomDiagnostic> {
+        let (name, _) = Parser::expect_ident(self, what)?;
+        Ok(name)
+    }
+
+    fn parse_params(&mut self) -> Result<Vec<Param>, AxiomDiagnostic> {
+        self.expect(&TokenKind::LParen, "Expected '(' to start parameter list")?;
+        let mut params = Vec::new();
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            loop {
+                let (pname, _) = Parser::expect_ident(self, "Expected parameter name")?;
+                self.expect(&TokenKind::Colon, "Expected ':' after parameter name")?;
+                let pty = self.parse_type()?;
+                params.push(Param {
+                    name: pname,
+                    ty: pty,
+                });
+                if matches!(self.peek().kind, TokenKind::Comma) {
+                    self.advance();
+                    if matches!(self.peek().kind, TokenKind::RParen) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(&TokenKind::RParen, "Expected ')' after parameter list")?;
+        Ok(params)
+    }
+
+    fn parse_effect_and_ret(&mut self) -> Result<(Vec<EffectCap>, Type), AxiomDiagnostic> {
+        let mut effects = Vec::new();
+        match &self.peek().kind {
+            TokenKind::Arrow => {
+                self.advance();
+            }
+            TokenKind::EffectOpen => {
+                self.advance();
+                if !matches!(self.peek().kind, TokenKind::EffectClose) {
+                    loop {
+                        let (ename, _) = Parser::expect_ident(
+                            self,
+                            "Expected effect capability name inside '-[...]->'",
+                        )?;
+                        let scope = if matches!(self.peek().kind, TokenKind::LParen) {
+                            self.advance();
+                            let s = match self.peek().kind.clone() {
+                                TokenKind::Str(val) => {
+                                    self.advance();
+                                    val
+                                }
+                                other => {
+                                    return Err(AxiomDiagnostic::new(
+                                        "E012_EXPECTED_SCOPE_STR",
+                                        "parse",
+                                        format!("Expected string literal scope, found {other:?}"),
+                                        self.peek().span,
+                                        "Write capability scope as a string literal, e.g. Fs(\"/tmp\")",
+                                    ));
+                                }
+                            };
+                            self.expect(
+                                &TokenKind::RParen,
+                                "Expected ')' after capability scope literal",
+                            )?;
+                            Some(s)
+                        } else {
+                            None
+                        };
+                        effects.push(EffectCap { name: ename, scope });
+                        if matches!(self.peek().kind, TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(
+                    &TokenKind::EffectClose,
+                    "Close capability list with ']->' before return type",
+                )?;
+            }
+            other => {
+                return Err(AxiomDiagnostic::new(
+                    "E013_EXPECTED_RETURN_ARROW",
+                    "parse",
+                    format!("Expected '->' or '-[...]->', found {other:?}"),
+                    self.peek().span,
+                    "Specify return type with '-> <Type>' or effects + return type with '-[Mem]-> <Type>'",
+                ));
+            }
+        }
+        let ret_type = self.parse_type()?;
+        Ok((effects, ret_type))
+    }
+
+    fn parse_expr(&mut self) -> Result<RawExpr, AxiomDiagnostic> {
+        Parser::parse_expr(self)
+    }
+}
+
 fn resolve_and_lower(
     items: Vec<RawItem>,
+    raw_formas: Vec<crate::forma::FormaDef<RawExpr>>,
     raw_fns: Vec<RawFnDef>,
 ) -> Result<Module, AxiomDiagnostic> {
     let mut resolver = ModuleResolver::new();
@@ -2496,15 +2632,32 @@ fn resolve_and_lower(
     }
     resolver.verify_no_layout_overlaps()?;
 
-    let mut functions = Vec::with_capacity(raw_fns.len());
+    let mut formas = Vec::with_capacity(raw_formas.len());
+    for rf in raw_formas {
+        let param_set: BTreeSet<String> = rf.params.iter().map(|p| p.name.clone()).collect();
+        let mut param_locals = vec![param_set];
+        let resolved = rf.try_map(&mut |e| resolver.lower_expr(&e, &mut param_locals))?;
+        formas.push(resolved);
+    }
+
+    let mut functions = Vec::with_capacity(
+        raw_fns.len() + formas.len() + if formas.is_empty() { 0 } else { 3 },
+    );
+    if !formas.is_empty() {
+        functions.extend(crate::forma::forma_runtime_helpers());
+    }
     for rf in raw_fns {
         functions.push(resolver.lower_fn(rf)?);
+    }
+    for forma in &formas {
+        functions.push(crate::forma::lower_forma_def(forma));
     }
 
     Ok(Module {
         consts: resolver.consts_order,
         enums: resolver.enums_order,
         layouts: resolver.layouts_order,
+        formas,
         functions,
     })
 }

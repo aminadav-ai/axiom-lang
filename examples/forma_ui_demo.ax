@@ -1,0 +1,207 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom.Forma Reference Demo Capsule (.ax -> .axw)
+// Demonstrates declarative spatial UI with Z3-verified geometry, 1-Draw-Call GPU
+// primitives, hover_bg, Scroll clipping, Slot Flux bridges, and deferred Overlay dropdowns.
+
+const BG_APP: i64 = 0xFF141210;
+const BG_SIDEBAR: i64 = 0xFF1C1A17;
+const BG_PANEL: i64 = 0xFF24211D;
+const BG_BTN: i64 = 0xFF332F2A;
+const BG_BTN_HOVER: i64 = 0xFF474139;
+const BG_ACCENT: i64 = 0xFFE5983B;
+const BG_ACCENT_HOVER: i64 = 0xFFF2AD52;
+const COL_BORDER: i64 = 0xFF3D3832;
+const COL_DIVIDER: i64 = 0xFF302C27;
+const COL_CARD: i64 = 0xFF2B2722;
+const COL_TEXT_HINT: i64 = 0xFF9C948A;
+
+const ACT_NAV_CHAT: i64 = 10;
+const ACT_NAV_FILES: i64 = 11;
+const ACT_NAV_SETTINGS: i64 = 12;
+const ACT_TOGGLE_DD: i64 = 20;
+const ACT_PICK_M1: i64 = 21;
+const ACT_PICK_M2: i64 = 22;
+const ACT_ATTACH: i64 = 30;
+const ACT_SEND: i64 = 31;
+
+layout AppState at 0 {
+  active_tab: word,
+  dd_open: word,
+  model_idx: word,
+  scroll_y: word,
+  last_action: word,
+}
+
+fn push_card_rect(x: i64, y: i64, w: i64, h: i64, col: i64, clip_id: i64) -[Mem]-> unit {
+  let idx = mem_load(12);
+  if idx < 80000 {
+    let b = 65536 + idx * 8;
+    mem_store(b, x);
+    mem_store(b + 1, y);
+    mem_store(b + 2, w);
+    mem_store(b + 3, h);
+    mem_store(b + 4, 0 | (10 << 4) | (1 << 12));
+    mem_store(b + 5, col);
+    mem_store(b + 6, COL_BORDER);
+    mem_store(b + 7, clip_id & 15);
+    mem_store(12, idx + 1);
+  }
+}
+
+fn draw_feed_cards(rx: i64, ry: i64, rw: i64, rh: i64, clip_id: i64) -[Mem]-> unit {
+  let sy = AppState.scroll_y;
+  let card_w = if rw > 32 { rw - 32 } else { rw };
+  let mut i: i64 = 0;
+  while i < 4 max 4 {
+    let cy = ry + 16 + i * 76 - sy;
+    if cy + 60 > ry && cy < ry + rh {
+      push_card_rect(rx + 16, cy, card_w, 60, COL_CARD, clip_id);
+    }
+    i += 1;
+  }
+}
+
+fn handle_feed_wheel(_rx: i64, _ry: i64, _rw: i64, _rh: i64, _clip_id: i64) -[Mem]-> unit {
+  let dy = mem_load(48103);
+  let next = AppState.scroll_y - dy;
+  let clamped = if next < 0 { 0 } else if next > 240 { 240 } else { next };
+  AppState.scroll_y = clamped;
+}
+
+fn draw_badge_dot(rx: i64, ry: i64, rw: i64, rh: i64, clip_id: i64) -[Mem]-> unit {
+  let dx = rx + (rw - 10) / 2;
+  let dy = ry + (rh - 10) / 2;
+  push_card_rect(dx, dy, 10, 10, COL_TEXT_HINT, clip_id);
+}
+
+forma StudioShell(vw: i64, vh: i64, dd_open: bool)
+  req vw >= 640 && vh >= 400
+  -[Mem]-> i64
+{
+  Box(x: 0, y: 0, w: vw, h: vh, bg: BG_APP) {
+    Row(gap: 0) {
+      // Left sidebar
+      Box(w: 220, bg: BG_SIDEBAR, border: 1, border_col: COL_BORDER, pad: 12) {
+        Col(gap: 8) {
+          Rect(h: 36, radius: 8, bg: BG_PANEL, border: 1, border_col: COL_BORDER)
+          Divider(h: 1, bg: COL_DIVIDER)
+          Button(id: 1, h: 36, radius: 8, bg: BG_BTN, hover_bg: BG_BTN_HOVER, on_click: ACT_NAV_CHAT) {
+            Slot(render: draw_badge_dot)
+          }
+          Button(id: 2, h: 36, radius: 8, bg: BG_BTN, hover_bg: BG_BTN_HOVER, on_click: ACT_NAV_FILES) {
+            Slot(render: draw_badge_dot)
+          }
+          Spacer(grow: 1)
+          Button(id: 3, h: 36, radius: 8, bg: BG_BTN, hover_bg: BG_BTN_HOVER, on_click: ACT_NAV_SETTINGS) {
+            Slot(render: draw_badge_dot)
+          }
+        }
+      }
+
+      // Main workspace column
+      Col(grow: 1, pad: 16, gap: 12) {
+        // Header bar with model Dropdown + deferred Overlay menu
+        Box(h: 48, radius: 10, bg: BG_PANEL, border: 1, border_col: COL_BORDER, pad_x: 12, pad_y: 8) {
+          Row(gap: 8, align: center) {
+            Rect(w: 110, h: 24, radius: 6, bg: BG_BTN)
+            Spacer(grow: 1)
+            Dropdown(id: 20, w: 160, h: 32, radius: 8, bg: BG_BTN, hover_bg: BG_BTN_HOVER, border: 1, border_col: COL_BORDER, on_click: ACT_TOGGLE_DD) {
+              Slot(render: draw_badge_dot)
+              Overlay(x: vw - 196, y: 68, w: 168, h: 92, radius: 10, bg: BG_PANEL, border: 1, border_col: COL_BORDER, shadow: 14, pad: 8, visible: dd_open) {
+                Col(gap: 6) {
+                  Button(id: 21, h: 34, radius: 6, bg: BG_BTN, hover_bg: BG_ACCENT, on_click: ACT_PICK_M1)
+                  Button(id: 22, h: 34, radius: 6, bg: BG_BTN, hover_bg: BG_ACCENT, on_click: ACT_PICK_M2)
+                }
+              }
+            }
+          }
+        }
+
+        // Scrollable message feed with hardware clip rect #3
+        Scroll(id: 30, grow: 1, clip: 3, radius: 10, bg: BG_PANEL, border: 1, border_col: COL_BORDER) {
+          Slot(render: draw_feed_cards, on_wheel: handle_feed_wheel)
+        }
+
+        // Bottom composer bar
+        Box(h: 84, radius: 12, bg: BG_PANEL, border: 1, border_col: COL_BORDER, pad: 10) {
+          Col(gap: 8) {
+            Spacer(grow: 1)
+            Row(h: 34, gap: 8, align: center) {
+              Button(id: 40, w: 34, h: 34, radius: 8, bg: BG_BTN, hover_bg: BG_BTN_HOVER, on_click: ACT_ATTACH) {
+                Slot(render: draw_badge_dot)
+              }
+              Spacer(grow: 1)
+              Button(id: 41, w: 34, h: 34, radius: 17, bg: BG_ACCENT, hover_bg: BG_ACCENT_HOVER, on_click: ACT_SEND) {
+                Slot(render: draw_badge_dot)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+export fn init_app(_seed: i64, _vw: i64, _vh: i64) -[Mem]-> i64 {
+  AppState.active_tab = 0;
+  AppState.dd_open = 1;
+  AppState.model_idx = 0;
+  AppState.scroll_y = 0;
+  AppState.last_action = 0;
+  0
+}
+
+export fn step_ui(
+  vw: i64,
+  vh: i64,
+  mx: i64,
+  my: i64,
+  _m_down: i64,
+  m_clicked: i64,
+  wheel_dy: i64,
+  _key_char: i64,
+  _key_special: i64
+) -[Mem]-> i64 {
+  let safe_vw = if vw < 640 { 640 } else { vw };
+  let safe_vh = if vh < 400 { 400 } else { vh };
+
+  // Reset per-frame primitive counter and root clip rect #0
+  mem_store(12, 0);
+  mem_store(48000, 0);
+  mem_store(48001, 0);
+  mem_store(48002, safe_vw);
+  mem_store(48003, safe_vh);
+
+  // Populate Axiom.Forma pointer mailbox
+  mem_store(48100, mx);
+  mem_store(48101, my);
+  mem_store(48102, m_clicked);
+  mem_store(48103, wheel_dy);
+
+  let dd_is_open = AppState.dd_open != 0;
+  let act = StudioShell(safe_vw, safe_vh, dd_is_open);
+
+  if act == ACT_TOGGLE_DD {
+    AppState.dd_open = if dd_is_open { 0 } else { 1 };
+  } else if act == ACT_PICK_M1 {
+    AppState.model_idx = 0;
+    AppState.dd_open = 0;
+  } else if act == ACT_PICK_M2 {
+    AppState.model_idx = 1;
+    AppState.dd_open = 0;
+  } else if act != 0 {
+    AppState.last_action = act;
+  }
+
+  let hovered = mem_load(48104);
+  mem_store(11, if hovered != 0 { 1 } else { 0 });
+
+  mem_load(12)
+}
+
+export fn get_cmd_byte_offset() -> i64 ens result == 262144 { 262144 }
+export fn get_clips_byte_offset() -> i64 ens result == 192000 { 192000 }
+export fn get_prim_count() -[Mem]-> i64 { mem_load(12) }
+export fn get_cursor_kind() -[Mem]-> i64 { mem_load(11) }

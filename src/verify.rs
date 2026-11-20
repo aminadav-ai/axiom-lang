@@ -780,7 +780,7 @@ where
     Ok(sha256_hex(key_material.as_bytes()))
 }
 
-fn find_z3_binary() -> Result<PathBuf, AxiomDiagnostic> {
+pub(crate) fn find_z3_binary() -> Result<PathBuf, AxiomDiagnostic> {
     if let Ok(custom) = env::var("AXIOM_Z3_BIN") {
         let p = PathBuf::from(custom);
         if p.is_file() {
@@ -808,7 +808,7 @@ fn find_z3_binary() -> Result<PathBuf, AxiomDiagnostic> {
     ))
 }
 
-fn run_z3(z3_bin: &PathBuf, script: &str) -> Result<String, AxiomDiagnostic> {
+pub(crate) fn run_z3(z3_bin: &PathBuf, script: &str) -> Result<String, AxiomDiagnostic> {
     let mut child = Command::new(z3_bin)
         .args(["-smt2", "-in", "-t:3000"])
         .stdin(Stdio::piped())
@@ -866,7 +866,7 @@ fn extract_counterexample(z3_out: &str, raw_params: &[Param]) -> BTreeMap<String
     map
 }
 
-fn normalize_smt_value(val: &str) -> String {
+pub(crate) fn normalize_smt_value(val: &str) -> String {
     let trimmed = val.trim();
     if let Some(inner) = trimmed.strip_prefix("(- ").and_then(|s| s.strip_suffix(')')) {
         return format!("-{}", inner.trim());
@@ -874,7 +874,7 @@ fn normalize_smt_value(val: &str) -> String {
     trimmed.to_string()
 }
 
-fn parse_sexp_pairs(input: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_sexp_pairs(input: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let bytes = input.as_bytes();
     let n = bytes.len();

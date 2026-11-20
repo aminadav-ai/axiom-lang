@@ -243,5 +243,7 @@ pub struct Module {
     pub enums: Vec<EnumDef>,
     #[serde(default)]
     pub layouts: Vec<LayoutDef>,
+    #[serde(default)]
+    pub formas: Vec<crate::forma::FormaDef>,
     pub functions: Vec<FnDef>,
 }

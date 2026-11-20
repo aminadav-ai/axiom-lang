@@ -416,6 +416,7 @@ impl GraphStore {
         module: &Module,
         use_cache: bool,
     ) -> Result<Vec<VerificationReport>, AxiomDiagnostic> {
+        crate::forma::verify_ui::verify_module_formas(module)?;
         let order = topo_sort_functions(&module.functions)?;
         let z3_version = z3_version_id()?;
         let mut temp_aliases = self.aliases.clone();
@@ -491,6 +492,7 @@ impl GraphStore {
         module: &Module,
         use_cache: bool,
     ) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
+        crate::forma::verify_ui::verify_module_formas(module)?;
         let order = topo_sort_functions(&module.functions)?;
         let z3_version = z3_version_id()?;
         let mut staged_aliases = self.aliases.clone();
