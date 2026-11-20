@@ -6,7 +6,9 @@ use axiom_lang::parser::parse_module;
 use axiom_lang::showcase::{build_showcase_assets, serve_showcase_http};
 use axiom_lang::store::GraphStore;
 use axiom_lang::strata_elf::{build_strata_elf_target, run_strata_elf_target};
-use axiom_lang::strata_wasm::{build_strata_wasm_from_module, build_strata_wasm_target};
+use axiom_lang::strata_wasm::{
+    build_strata_wasm_from_module_with_cache, build_strata_wasm_target,
+};
 use axiom_lang::wasm::{build_wasm_module, WasmArtifact};
 use std::env;
 use std::fs;
@@ -16,13 +18,14 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let json_mode = args.iter().any(|a| a == "--json");
+    let no_cache = args.iter().any(|a| a == "--no-cache");
     let pos_args: Vec<&str> = args
         .iter()
-        .filter(|a| a.as_str() != "--json")
+        .filter(|a| a.as_str() != "--json" && a.as_str() != "--no-cache")
         .map(String::as_str)
         .collect();
 
-    match run_cli(&pos_args, json_mode) {
+    match run_cli(&pos_args, json_mode, no_cache) {
         Ok(()) => ExitCode::SUCCESS,
         Err(diag) => {
             if json_mode {
@@ -35,8 +38,9 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
+fn run_cli(args: &[&str], json_mode: bool, no_cache: bool) -> Result<(), AxiomDiagnostic> {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let use_cache = !no_cache;
 
     match args {
         ["verify", file_path] => {
@@ -51,7 +55,7 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             })?;
             let module = parse_module(&src)?;
             let store = GraphStore::open(&cwd)?;
-            let reports = store.verify_module(&module)?;
+            let reports = store.verify_module_with_cache(&module, use_cache)?;
 
             if json_mode {
                 println!(
@@ -80,7 +84,7 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             })?;
             let module = parse_module(&src)?;
             let mut store = GraphStore::open(&cwd)?;
-            let entries = store.ingest_module(&module)?;
+            let entries = store.ingest_module_with_cache(&module, use_cache)?;
 
             if json_mode {
                 println!(
@@ -118,7 +122,12 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             })?;
             let module = parse_module(&src)?;
             let mut store = GraphStore::open(&cwd)?;
-            let art = build_strata_wasm_from_module(&mut store, &module, Path::new(out_path))?;
+            let art = build_strata_wasm_from_module_with_cache(
+                &mut store,
+                &module,
+                Path::new(out_path),
+                use_cache,
+            )?;
             if json_mode {
                 println!("{}", serde_json::to_string_pretty(&art).unwrap_or_default());
             } else {
@@ -410,7 +419,7 @@ fn run_cli(args: &[&str], json_mode: bool) -> Result<(), AxiomDiagnostic> {
             "cli",
             "Invalid CLI arguments",
             Span::zero(),
-            "Usage: axiom <verify <f.ax> | ingest <f.ax> | compile-wasm <f.ax> -o <out.wasm> | build-strata-wasm <ref> -o <out.wasm> | build-strata-elf <ref> -o <out> | run-strata <ref> [args...] | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json]",
+            "Usage: axiom <verify <f.ax> | ingest <f.ax> | compile-wasm <f.ax> -o <out.wasm> | build-strata-wasm <ref> -o <out.wasm> | build-strata-elf <ref> -o <out> | run-strata <ref> [args...] | build <ref> [-o out] | run <ref> [args...] | show <ref> | graph | passport <ref> | rename <old> <new>> [--json] [--no-cache]",
         )),
     }
 }

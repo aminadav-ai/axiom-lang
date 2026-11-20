@@ -33,8 +33,18 @@ pub fn build_strata_wasm_from_module(
     module: &Module,
     out_path: &Path,
 ) -> Result<StrataWasmArtifact, AxiomDiagnostic> {
+    build_strata_wasm_from_module_with_cache(store, module, out_path, true)
+}
+
+/// Compile a module to a pure `.wasm` binary with explicit control over the Z3 proof cache.
+pub fn build_strata_wasm_from_module_with_cache(
+    store: &mut GraphStore,
+    module: &Module,
+    out_path: &Path,
+    use_cache: bool,
+) -> Result<StrataWasmArtifact, AxiomDiagnostic> {
     let t0 = Instant::now();
-    let entries = store.ingest_module(module)?;
+    let entries = store.ingest_module_with_cache(module, use_cache)?;
 
     // Determine exported functions: any `export fn` in module, or the last function if none marked `export`
     let mut export_pairs: Vec<(String, String)> = Vec::new();

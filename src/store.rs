@@ -2,11 +2,15 @@ use crate::ast::{EffectCap, Expr, FnDef, Module, Stmt, TargetRef, Type};
 use crate::canon::{canonicalize_fn, CanonicalNode};
 use crate::diag::{AxiomDiagnostic, Span};
 use crate::typecheck::{typecheck_node, DirectSecretSink};
-use crate::verify::{verify_node, VerificationReport};
+use crate::verify::{
+    compute_proof_key, verify_node, z3_version_id, VerificationReport, PROOF_CACHE_SCHEMA_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestEntry {
@@ -70,10 +74,34 @@ pub struct GraphSummaryNode {
     pub direct_effects: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProofCacheEntry {
+    obligations_checked: usize,
+    node_hash: String,
+    z3_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProofCacheFile {
+    schema_version: String,
+    entries: BTreeMap<String, ProofCacheEntry>,
+}
+
+impl Default for ProofCacheFile {
+    fn default() -> Self {
+        Self {
+            schema_version: PROOF_CACHE_SCHEMA_VERSION.to_string(),
+            entries: BTreeMap::new(),
+        }
+    }
+}
+
 pub struct GraphStore {
     nodes_dir: PathBuf,
     aliases_file: PathBuf,
+    proof_cache_file: PathBuf,
     aliases: BTreeMap<String, String>,
+    proof_cache: Mutex<ProofCacheFile>,
 }
 
 impl GraphStore {
@@ -81,6 +109,7 @@ impl GraphStore {
         let axiom_dir = workspace_root.join(".axiom");
         let nodes_dir = axiom_dir.join("nodes");
         let aliases_file = axiom_dir.join("aliases.json");
+        let proof_cache_file = axiom_dir.join("proof_cache.json");
 
         fs::create_dir_all(&nodes_dir).map_err(|e| {
             AxiomDiagnostic::new(
@@ -115,11 +144,128 @@ impl GraphStore {
             BTreeMap::new()
         };
 
+        let proof_cache = if proof_cache_file.is_file() {
+            fs::read_to_string(&proof_cache_file)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<ProofCacheFile>(&raw).ok())
+                .filter(|c| c.schema_version == PROOF_CACHE_SCHEMA_VERSION)
+                .unwrap_or_default()
+        } else {
+            ProofCacheFile::default()
+        };
+
         Ok(Self {
             nodes_dir,
             aliases_file,
+            proof_cache_file,
             aliases,
+            proof_cache: Mutex::new(proof_cache),
         })
+    }
+
+    fn save_proof_cache(&self) -> Result<(), AxiomDiagnostic> {
+        let snapshot = self
+            .proof_cache
+            .lock()
+            .map_err(|_| {
+                AxiomDiagnostic::new(
+                    "E030_STORE_IO",
+                    "store",
+                    "Proof cache mutex poisoned",
+                    Span::zero(),
+                    "Restart the verification process",
+                )
+            })?
+            .clone();
+
+        let json = serde_json::to_string_pretty(&snapshot).map_err(|e| {
+            AxiomDiagnostic::new(
+                "E030_STORE_IO",
+                "store",
+                format!("Failed to serialize proof_cache.json: {e}"),
+                Span::zero(),
+                "Internal serialization error",
+            )
+        })?;
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp_name = format!("proof_cache.json.tmp.{}.{nanos}", std::process::id());
+        let tmp_path = self
+            .proof_cache_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(tmp_name);
+
+        fs::write(&tmp_path, json).map_err(|e| {
+            AxiomDiagnostic::new(
+                "E030_STORE_IO",
+                "store",
+                format!("Failed to write temporary proof cache file: {e}"),
+                Span::zero(),
+                "Check disk space and permissions in .axiom/",
+            )
+        })?;
+
+        fs::rename(&tmp_path, &self.proof_cache_file).map_err(|e| {
+            let _ = fs::remove_file(&tmp_path);
+            AxiomDiagnostic::new(
+                "E030_STORE_IO",
+                "store",
+                format!("Failed to atomically commit proof_cache.json: {e}"),
+                Span::zero(),
+                "Check filesystem permissions in .axiom/",
+            )
+        })
+    }
+
+    fn verify_node_with_cache<F>(
+        &self,
+        raw_fn: &FnDef,
+        node: &CanonicalNode,
+        loader: &F,
+        use_cache: bool,
+        z3_version: &str,
+        cache_dirty: &mut bool,
+    ) -> Result<VerificationReport, AxiomDiagnostic>
+    where
+        F: Fn(&str) -> Result<CanonicalNode, AxiomDiagnostic>,
+    {
+        let proof_key = compute_proof_key(node, loader, z3_version)?;
+
+        if use_cache {
+            if let Ok(guard) = self.proof_cache.lock() {
+                if let Some(entry) = guard.entries.get(&proof_key) {
+                    return Ok(VerificationReport {
+                        alias: raw_fn.name.clone(),
+                        short_hash: node.short_hash.clone(),
+                        obligations_checked: entry.obligations_checked,
+                        elapsed_ms: 0,
+                        status: "PROVED (cached)".to_string(),
+                        cached: true,
+                    });
+                }
+            }
+        }
+
+        // Run Z3; errors / counterexamples return Err immediately and are NEVER cached.
+        let report = verify_node(raw_fn, node, loader)?;
+
+        if let Ok(mut guard) = self.proof_cache.lock() {
+            guard.entries.insert(
+                proof_key,
+                ProofCacheEntry {
+                    obligations_checked: report.obligations_checked,
+                    node_hash: node.hash.clone(),
+                    z3_version: z3_version.to_string(),
+                },
+            );
+            *cache_dirty = true;
+        }
+
+        Ok(report)
     }
 
     fn save_aliases(&self) -> Result<(), AxiomDiagnostic> {
@@ -262,10 +408,20 @@ impl GraphStore {
     }
 
     pub fn verify_module(&self, module: &Module) -> Result<Vec<VerificationReport>, AxiomDiagnostic> {
+        self.verify_module_with_cache(module, true)
+    }
+
+    pub fn verify_module_with_cache(
+        &self,
+        module: &Module,
+        use_cache: bool,
+    ) -> Result<Vec<VerificationReport>, AxiomDiagnostic> {
         let order = topo_sort_functions(&module.functions)?;
+        let z3_version = z3_version_id()?;
         let mut temp_aliases = self.aliases.clone();
         let mut temp_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
         let mut reports = Vec::with_capacity(order.len());
+        let mut cache_dirty = false;
 
         for idx in order {
             let raw_fn = &module.functions[idx];
@@ -297,23 +453,52 @@ impl GraphStore {
             };
 
             node.direct_secret_sinks = typecheck_node(&raw_fn.name, &node, &loader)?;
-            let report = verify_node(raw_fn, &node, &loader)?;
+            let report = match self.verify_node_with_cache(
+                raw_fn,
+                &node,
+                &loader,
+                use_cache,
+                &z3_version,
+                &mut cache_dirty,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    if cache_dirty {
+                        let _ = self.save_proof_cache();
+                    }
+                    return Err(e);
+                }
+            };
 
             temp_aliases.insert(raw_fn.name.clone(), node.hash.clone());
             temp_nodes.insert(node.hash.clone(), node);
             reports.push(report);
         }
 
+        if cache_dirty {
+            self.save_proof_cache()?;
+        }
+
         Ok(reports)
     }
 
     pub fn ingest_module(&mut self, module: &Module) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
+        self.ingest_module_with_cache(module, true)
+    }
+
+    pub fn ingest_module_with_cache(
+        &mut self,
+        module: &Module,
+        use_cache: bool,
+    ) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
         let order = topo_sort_functions(&module.functions)?;
+        let z3_version = z3_version_id()?;
         let mut staged_aliases = self.aliases.clone();
         let mut staged_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
         let mut staged_entries = Vec::with_capacity(order.len());
+        let mut cache_dirty = false;
 
-        // Phase 1: Canonicalize + typecheck/taint-check + formally verify via Z3 before committing!
+        // Phase 1: Canonicalize + typecheck/taint-check + formally verify via Z3 (or proof cache) before committing!
         for idx in order {
             let raw_fn = &module.functions[idx];
             let mut node = canonicalize_fn(
@@ -344,11 +529,30 @@ impl GraphStore {
             };
 
             node.direct_secret_sinks = typecheck_node(&raw_fn.name, &node, &loader)?;
-            let vreport = verify_node(raw_fn, &node, &loader)?;
+            let vreport = match self.verify_node_with_cache(
+                raw_fn,
+                &node,
+                &loader,
+                use_cache,
+                &z3_version,
+                &mut cache_dirty,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    if cache_dirty {
+                        let _ = self.save_proof_cache();
+                    }
+                    return Err(e);
+                }
+            };
 
             staged_aliases.insert(raw_fn.name.clone(), node.hash.clone());
             staged_entries.push((raw_fn.name.clone(), node.clone(), vreport));
             staged_nodes.insert(node.hash.clone(), node);
+        }
+
+        if cache_dirty {
+            self.save_proof_cache()?;
         }
 
         // Phase 2: Commit verified nodes atomically into .axiom/nodes/
