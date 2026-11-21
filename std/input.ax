@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom Standard Library: std/input.ax
+// Real-time held-key state bitmask (layout-independent physical keys, written every frame
+// by axiom-web at word 48106) for smooth 60 FPS games & 3D movement.
+
+const STD_KEYS_HELD_WORD: i64 = 48106;
+
+const KEY_W: i64 = 1;
+const KEY_A: i64 = 2;
+const KEY_S: i64 = 4;
+const KEY_D: i64 = 8;
+const KEY_UP: i64 = 16;
+const KEY_DOWN: i64 = 32;
+const KEY_LEFT: i64 = 64;
+const KEY_RIGHT: i64 = 128;
+const KEY_Q: i64 = 256;
+const KEY_E: i64 = 512;
+const KEY_SPACE: i64 = 1024;
+const KEY_SHIFT: i64 = 2048;
+const KEY_R: i64 = 4096;
+
+fn keys_held_mask() -[Mem]-> i64 {
+  mem_load(STD_KEYS_HELD_WORD)
+}
+
+fn key_held(bit: i64) -[Mem]-> bool {
+  (mem_load(STD_KEYS_HELD_WORD) & bit) != 0
+}

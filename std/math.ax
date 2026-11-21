@@ -86,3 +86,51 @@ fn rng_range(seed: i64, bound: i64) -> i64
   let v = abs_i64(seed) % bound;
   clamp_i64(v, 0, bound - 1)
 }
+
+// Pure Z3-verified integer square root (up to 2^28).
+fn isqrt(n: i64) -> i64
+  ens result >= 0
+{
+  if n <= 0 {
+    0
+  } else {
+    let mut x = n;
+    let mut res = 0;
+    let mut bit = 16777216;
+    while bit > x max 14 {
+      bit = bit >> 2;
+    }
+    while bit > 0 max 14 {
+      if x >= res + bit {
+        x = x - (res + bit);
+        res = (res >> 1) + bit;
+      } else {
+        res = res >> 1;
+      };
+      bit = bit >> 2;
+    }
+    if res < 0 { 0 } else { res }
+  }
+}
+
+// Pure fixed-point sine: ang in 0..4095 (full circle = 4096), returns -1024..1024.
+fn sin_1024(ang: i64) -> i64
+  ens result >= -1024 && result <= 1024
+{
+  let a = ang & 4095;
+  let neg = a >= 2048;
+  let i = if neg { a - 2048 } else { a };
+  let p = i * (2048 - i);
+  let p_shr = p >> 8;
+  let denom = 81920 - ((4 * p) >> 8);
+  let s = if denom > 0 { (16 * p_shr * 1024) / denom } else { 0 };
+  let mag = clamp_i64(s, 0, 1024);
+  if neg { -mag } else { mag }
+}
+
+// Pure fixed-point cosine: ang in 0..4095 (full circle = 4096), returns -1024..1024.
+fn cos_1024(ang: i64) -> i64
+  ens result >= -1024 && result <= 1024
+{
+  sin_1024(ang + 1024)
+}
