@@ -14,10 +14,17 @@ const SFX_SPAWN: i64 = 4;
 const SFX_CLEAR: i64 = 5;
 const SFX_ERROR: i64 = 6;
 const SFX_WIN: i64 = 7;
+const SFX_SHOTGUN: i64 = 8;
+const SFX_MONSTER_HIT: i64 = 9;
+const SFX_MONSTER_DIE: i64 = 10;
+const SFX_PLAYER_HURT: i64 = 11;
+const SFX_STEP: i64 = 12;
+const SFX_GATE: i64 = 13;
+const SFX_JUMP: i64 = 14;
 
 // Play a built-in procedural SFX preset with pitch scaling (40..250%) and volume (0..100%)
 fn sfx_play(preset: i64, pitch_pct: i64, vol_pct: i64) -[Gpu]-> unit {
-  let p = clamp_i64(preset, 1, 7);
+  let p = clamp_i64(preset, 1, 14);
   let pi = clamp_i64(pitch_pct, 40, 250);
   let v = clamp_i64(vol_pct, 0, 100);
   do Gpu.call(50, p, pi, v);

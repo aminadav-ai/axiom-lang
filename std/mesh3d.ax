@@ -162,3 +162,21 @@ fn mesh3d_limb(
   // Top (+Y)
   mesh3d_quad(0, ax, y1, az, 0, 0, bx, y1, bz, 1024, 0, dx, y1, dz, 1024, 1024, ex, y1, ez, 0, 1024, 0, 127, 0, mat, rgba, ao, emissive);
 }
+
+// Sloped architectural roof rafter / diagonal beam spanning (x0,y0) -> (x1,y1) at z=[z0..z1]
+fn mesh3d_rafter_x(
+  x0: i64, y0: i64, x1: i64, y1: i64, z0: i64, z1: i64, thick_y: i64,
+  mat: i64, rgba: i64, ao: i64
+) -[Mem]-> unit {
+  let u_len = clamp_i64(((abs_i64(x1 - x0) + abs_i64(y1 - y0)) * 1024) / 1400, 512, 16384);
+  let v_h = clamp_i64((thick_y * 1024) / 1200, 256, 4096);
+  let v_z = clamp_i64(((z1 - z0) * 1024) / 1200, 256, 4096);
+  // Front (+Z)
+  mesh3d_quad(0, x0, y0 + thick_y, z1, 0, 0, x1, y1 + thick_y, z1, u_len, 0, x1, y1, z1, u_len, v_h, x0, y0, z1, 0, v_h, 0, 0, 127, mat, rgba, ao, 0);
+  // Back (-Z)
+  mesh3d_quad(0, x1, y1 + thick_y, z0, 0, 0, x0, y0 + thick_y, z0, u_len, 0, x0, y0, z0, u_len, v_h, x1, y1, z0, 0, v_h, 0, 0, -127, mat, rgba, ao, 0);
+  // Underside (-Y)
+  mesh3d_quad(0, x0, y0, z1, 0, 0, x1, y1, z1, u_len, 0, x1, y1, z0, u_len, v_z, x0, y0, z0, 0, v_z, 0, -127, 0, mat, rgba, ao, 0);
+  // Top (+Y)
+  mesh3d_quad(0, x0, y0 + thick_y, z0, 0, 0, x1, y1 + thick_y, z0, u_len, 0, x1, y1 + thick_y, z1, u_len, v_z, x0, y0 + thick_y, z1, 0, v_z, 0, 127, 0, mat, rgba, ao, 0);
+}
