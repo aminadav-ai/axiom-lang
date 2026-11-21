@@ -1,0 +1,166 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom Standard Library: std/markdown.ax
+// Reusable UTF-32 Markdown renderer (headings, bold, inline code, fenced code blocks,
+// bullet lists, horizontal rules, and word-wrapped paragraphs).
+// Single-source-of-truth layout: `md_measure_h` and `md_draw` share `std_md_layout`.
+
+use "std/math.ax";
+use "std/color.ax";
+use "std/gfx.ax";
+use "std/text.ax";
+use "std/theme.ax";
+
+fn std_md_find_eol(ptr: i64, start: i64, n: i64) -[Mem]-> i64 {
+  let mut i = start;
+  let mut stop = false;
+  while i < n && !stop max 1024 {
+    if mem_load(ptr + 1 + i) == '\n' { stop = true; } else { i += 1; }
+  }
+  i
+}
+
+fn std_md_is_fence(ptr: i64, s: i64, e: i64) -[Mem]-> bool {
+  e - s >= 3
+    && mem_load(ptr + 1 + s) == '`'
+    && mem_load(ptr + 1 + s + 1) == '`'
+    && mem_load(ptr + 1 + s + 2) == '`'
+}
+
+fn std_md_is_hr(ptr: i64, s: i64, e: i64) -[Mem]-> bool {
+  e - s >= 3
+    && mem_load(ptr + 1 + s) == '-'
+    && mem_load(ptr + 1 + s + 1) == '-'
+    && mem_load(ptr + 1 + s + 2) == '-'
+}
+
+fn std_md_draw_inline(
+  draw: bool, ptr: i64, start: i64, end_i: i64, x: i64, y: i64, max_w: i64,
+  sz: i64, lh: i64, base_style: i64, base_col: i64, th: i64,
+  clip: i64, vis_y0: i64, vis_y1: i64
+) -[Mem]-> i64 {
+  let mw = clamp_i64(max_w, 40, 4000);
+  let mut cx = x;
+  let mut cy = y;
+  let mut i = start;
+  let mut bold = base_style == 1;
+  let mut in_code = false;
+  let code_bg = theme_surf2(th);
+  let code_fg = theme_accent();
+
+  while i < end_i max 1024 {
+    let ch = mem_load(ptr + 1 + i);
+    if !in_code && i + 1 < end_i && ch == '*' && mem_load(ptr + 1 + i + 1) == '*' {
+      bold = !bold;
+      i += 2;
+    } else if ch == '`' {
+      in_code = !in_code;
+      i += 1;
+    } else {
+      let st = if in_code { 2 } else if bold { 1 } else { 0 };
+      let col = if in_code { code_fg } else { base_col };
+      let adv = glyph_px(ch, sz, st);
+      if cx > x && cx + adv > x + mw {
+        cx = x;
+        cy += lh;
+      };
+      if draw && cy + lh >= vis_y0 && cy <= vis_y1 {
+        if in_code {
+          ui_rect(cx, cy - 1, adv + 1, sz + 3, 2, 0, 0, code_bg, 0, clip);
+        };
+        let _ = ui_glyph(cx, cy, ch, sz, st, col, clip);
+      };
+      cx += adv;
+      i += 1;
+    }
+  }
+  (cy - y) + lh
+}
+
+fn std_md_layout(
+  draw: bool, buf_ptr: i64, max_cap: i64, x: i64, y: i64, max_w: i64,
+  body_sz: i64, line_h: i64, th: i64, clip: i64, vis_y0: i64, vis_y1: i64
+) -[Mem]-> i64 {
+  let cap = clamp_i64(max_cap, 1, 16384);
+  let n = clamp_i64(mem_load(buf_ptr), 0, cap);
+  let mw = clamp_i64(max_w, 60, 4000);
+  let sz = clamp_i64(body_sz, 10, 32);
+  let lh = clamp_i64(line_h, sz + 2, 64);
+  let mono_sz = clamp_i64(sz - 1, 10, 28);
+  let mono_lh = clamp_i64(lh - 2, mono_sz + 2, 56);
+
+  let mut cy = y;
+  let mut pos = 0;
+  let mut in_fence = false;
+
+  while pos < n max 512 {
+    let eol = std_md_find_eol(buf_ptr, pos, n);
+    if std_md_is_fence(buf_ptr, pos, eol) {
+      in_fence = !in_fence;
+      cy += 4;
+    } else if in_fence {
+      if draw && cy + mono_lh >= vis_y0 && cy <= vis_y1 {
+        ui_rect(x, cy - 2, mw, mono_lh + 2, 0, 0, 0, theme_code_bg(th), 0, clip);
+      };
+      let h_line = std_md_draw_inline(
+        draw, buf_ptr, pos, eol, x + 8, cy, mw - 16,
+        mono_sz, mono_lh, 2, theme_text(th), th, clip, vis_y0, vis_y1
+      );
+      cy += h_line;
+    } else if eol == pos {
+      cy += lh / 2;
+    } else if std_md_is_hr(buf_ptr, pos, eol) {
+      if draw && cy + 8 >= vis_y0 && cy <= vis_y1 {
+        ui_line(x, cy + 4, x + mw, cy + 4, 1, theme_border(th), clip);
+      };
+      cy += 10;
+    } else {
+      let c0 = mem_load(buf_ptr + 1 + pos);
+      if c0 == '#' {
+        let mut lvl = 0;
+        let mut p2 = pos;
+        while p2 < eol && mem_load(buf_ptr + 1 + p2) == '#' && lvl < 3 max 3 {
+          lvl += 1;
+          p2 += 1;
+        }
+        if p2 < eol && mem_load(buf_ptr + 1 + p2) == ' ' { p2 += 1; };
+        let h_sz = if lvl == 1 { sz + 5 } else if lvl == 2 { sz + 3 } else { sz + 1 };
+        let h_lh = h_sz + 6;
+        let hh = std_md_draw_inline(
+          draw, buf_ptr, p2, eol, x, cy + 2, mw,
+          h_sz, h_lh, 1, theme_text(th), th, clip, vis_y0, vis_y1
+        );
+        cy += hh + 4;
+      } else if (c0 == '-' || c0 == '*') && pos + 1 < eol && mem_load(buf_ptr + 1 + pos + 1) == ' ' {
+        if draw && cy + lh >= vis_y0 && cy <= vis_y1 {
+          ui_circle(x + 6, cy + sz / 2, 2, 0, theme_accent(), clip);
+        };
+        let bh = std_md_draw_inline(
+          draw, buf_ptr, pos + 2, eol, x + 16, cy, mw - 16,
+          sz, lh, 0, theme_text(th), th, clip, vis_y0, vis_y1
+        );
+        cy += bh + 2;
+      } else {
+        let ph = std_md_draw_inline(
+          draw, buf_ptr, pos, eol, x, cy, mw,
+          sz, lh, 0, theme_text(th), th, clip, vis_y0, vis_y1
+        );
+        cy += ph + 2;
+      }
+    };
+    pos = if eol < n { eol + 1 } else { n };
+  }
+  cy - y
+}
+
+fn md_measure_h(buf_ptr: i64, max_cap: i64, max_w: i64, body_sz: i64, line_h: i64, th: i64) -[Mem]-> i64 {
+  std_md_layout(false, buf_ptr, max_cap, 0, 0, max_w, body_sz, line_h, th, 0, 0, 0)
+}
+
+fn md_draw(
+  buf_ptr: i64, max_cap: i64, x: i64, y: i64, max_w: i64,
+  body_sz: i64, line_h: i64, th: i64, clip: i64, vis_y0: i64, vis_y1: i64
+) -[Mem]-> i64 {
+  std_md_layout(true, buf_ptr, max_cap, x, y, max_w, body_sz, line_h, th, clip, vis_y0, vis_y1)
+}

@@ -479,3 +479,90 @@ export fn axw_unicode_atlas() -[Mem]-> i64 { 1 }
 
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn test_std_stage3_text_edit_and_markdown_z3_and_headless_exec() {
+    let src = r##"
+use "std/prelude.ax";
+use "std/text_edit.ax";
+use "std/markdown.ax";
+
+layout DemoMem at 0 {
+  cursor_kind: word at 11,
+  prim_count: word at 12,
+  edit_buf: words[512] at 1000,
+  md_buf: words[512] at 2000,
+}
+
+export fn init_app() -[Mem]-> unit {
+  let mut p = 0;
+  p = tbuf_insert_char(DemoMem::edit_buf, 500, p, 'H');
+  p = tbuf_insert_char(DemoMem::edit_buf, 500, p, 'i');
+  p = tbuf_insert_char(DemoMem::edit_buf, 500, p, '!');
+  let _ = tbuf_backspace(DemoMem::edit_buf, 500, p, p);
+  do Mem.store_str(2000, "# Title\n- **Bold** `code`\n---\nHello");
+  ()
+}
+
+export fn step_ui(vw: i64, vh: i64, mx: i64, my: i64, _m_down: i64, _m_clicked: i64, _wheel_dy: i64, _key_char: i64, _key_special: i64) -[Mem, Gpu]-> i64 {
+  mem_store(12, 0);
+  let w = clamp_i64(vw, 320, 2560);
+  let h = clamp_i64(vh, 240, 1440);
+  let th = THEME_DARK;
+  ui_rect(0, 0, w, h, 0, 0, 0, theme_bg(th), 0, 0);
+  let _ = tbuf_measure_wrapped_h(DemoMem::edit_buf, 500, w - 40, 14, 20, 0);
+  let _ = tbuf_hit_wrapped(DemoMem::edit_buf, 500, mx, my, 20, 20, w - 40, 14, 20, 0);
+  let eh = tbuf_draw_wrapped(
+    DemoMem::edit_buf, 500, 20, 20, w - 40, 14, 20, 0, theme_text(th),
+    0, 1, theme_accent(), 2, theme_accent(), 0, 0, h
+  );
+  let _ = md_measure_h(DemoMem::md_buf, 500, w - 40, 14, 20, th);
+  let _ = md_draw(DemoMem::md_buf, 500, 20, 32 + eh, w - 40, 14, 20, th, 0, 0, h);
+  mem_load(12)
+}
+
+export fn get_cmd_byte_offset() -[Mem]-> i64 { GPU_CMD_BYTE_OFFSET }
+export fn get_clips_byte_offset() -[Mem]-> i64 { GPU_CLIPS_BYTE_OFFSET }
+export fn get_prim_count() -[Mem]-> i64 { mem_load(12) }
+export fn get_cursor_kind() -[Mem]-> i64 { 0 }
+export fn axw_unicode_atlas() -[Mem]-> i64 { 1 }
+"##;
+
+    let ws = temp_workspace("std_stage3_text_md");
+    let src_path = ws.join("std_stage3_demo.ax");
+    let out_axw = ws.join("std_stage3_demo.axw");
+    fs::write(&src_path, src).unwrap();
+
+    let module = parse_module_from_path(&src_path).expect("std Stage 3 demo should parse");
+    let mut store = GraphStore::open(&ws).unwrap();
+    let artifact =
+        build_strata_wasm_from_module_with_cache(&mut store, &module, &out_axw, false)
+            .expect("std Stage 3 text_edit + markdown should pass Z3 and compile to .axw");
+    assert!(artifact.wasm_size_bytes > 0);
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let axiom_web_bin = std::env::var_os("AXIOM_WEB_BIN")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            manifest_dir
+                .parent()
+                .map(|p| p.join("axiom-web/target/release/axiom-web"))
+        })
+        .filter(|p| p.is_file());
+
+    if let Some(axiom_web_bin) = axiom_web_bin {
+        let output = Command::new(&axiom_web_bin)
+            .arg(&out_axw)
+            .arg("--headless-check")
+            .output()
+            .expect("failed to execute axiom-web --headless-check");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("HEADLESS_OK"),
+            "std Stage 3 headless-check failed:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&ws);
+}
