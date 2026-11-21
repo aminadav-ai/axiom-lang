@@ -553,7 +553,7 @@ fn build_violation_diagnostic(
             ),
             Span::zero(),
             format!(
-                "Guard the call to {callee_desc} with an 'if' check or strengthen '{fn_name}' preconditions ('req')"
+                "Guard the call to {callee_desc} with an 'if' check or 'clamp_i64(...)', or strengthen '{fn_name}' preconditions ('req'). Note: if a value comes from linear memory (e.g. AppMem.x), bind it to a local 'let v = AppMem.x;' before checking its range because Z3 treats separate memory loads as independent"
             ),
         )
         .with_counterexample(cex),
@@ -562,7 +562,7 @@ fn build_violation_diagnostic(
             "verify",
             format!("Possible division or modulo by zero in function '{fn_name}'"),
             Span::zero(),
-            "Ensure divisor is provably non-zero via 'req divisor != 0' or an explicit 'if' branch",
+            "Ensure divisor is provably non-zero via 'req divisor != 0', 'clamp_i64(d, 1, ...)', or an explicit 'if d != 0' branch (bind layout fields to a local 'let d = AppMem.x;' before checking)",
         )
         .with_counterexample(cex),
     }

@@ -36,8 +36,31 @@ struct RawEnum {
     span: Span,
 }
 
+struct RawStruct {
+    name: String,
+    fields: Vec<(String, Span)>,
+    span: Span,
+}
+
+#[derive(Clone)]
+struct StructDef {
+    fields: BTreeMap<String, i64>,
+    field_names: Vec<String>,
+    size: i64,
+}
+
+#[derive(Clone)]
+struct LayoutFieldMeta {
+    offset: i64,
+    is_array: bool,
+    struct_type: Option<String>,
+    stride: i64,
+    count: i64,
+}
+
 struct RawLayoutField {
     name: String,
+    struct_type: Option<String>,
     len_expr: Option<RawExpr>,
     is_array: bool,
     at_expr: Option<RawExpr>,
@@ -54,6 +77,7 @@ struct RawLayout {
 enum RawItem {
     Const(RawConst),
     Enum(RawEnum),
+    Struct(RawStruct),
     Layout(RawLayout),
 }
 
@@ -86,6 +110,8 @@ pub(crate) enum RawStmt {
     LayoutStore {
         layout: String,
         field: String,
+        index: Option<RawExpr>,
+        subfield: Option<String>,
         op: Option<BinOp>,
         value: RawExpr,
         span: Span,
@@ -119,6 +145,8 @@ pub(crate) enum RawExpr {
     LayoutLoad {
         layout: String,
         field: String,
+        index: Option<Box<RawExpr>>,
+        subfield: Option<String>,
         span: Span,
     },
     Unary {
@@ -434,6 +462,9 @@ fn parse_raw_file(src: &str) -> Result<RawFile, AxiomDiagnostic> {
             TokenKind::Const => items.push(RawItem::Const(parser.parse_const()?)),
             TokenKind::Enum => items.push(RawItem::Enum(parser.parse_enum()?)),
             TokenKind::Layout => items.push(RawItem::Layout(parser.parse_layout()?)),
+            _ if parser.peek_is_contextual_kw("struct") => {
+                items.push(RawItem::Struct(parser.parse_struct()?))
+            }
             TokenKind::Forma => {
                 formas.push(crate::forma::parser::parse_forma_def(&mut parser, false)?)
             }
@@ -608,6 +639,38 @@ impl Parser {
         })
     }
 
+    fn parse_struct(&mut self) -> Result<RawStruct, AxiomDiagnostic> {
+        let (_, span) = self.expect_ident("Expected 'struct'")?;
+        let (name, _) = self.expect_ident("Expected struct name after 'struct'")?;
+        self.expect(&TokenKind::LBrace, "Expected '{' to open struct body")?;
+        let mut fields = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
+            let (fname, fspan) = self.expect_ident("Expected struct field name")?;
+            if matches!(self.peek().kind, TokenKind::Colon) {
+                self.advance();
+                let (fty, fty_span) =
+                    self.expect_ident("Expected 'word' or 'i64' for struct field type")?;
+                if fty != "word" && fty != "i64" {
+                    return Err(AxiomDiagnostic::new(
+                        "E010_UNEXPECTED_TOKEN",
+                        "parse",
+                        format!("Unsupported struct field type '{fty}'; expected 'word' or 'i64'"),
+                        fty_span,
+                        "Every struct field occupies 1 linear-memory word; declare it as 'field: word'",
+                    ));
+                }
+            }
+            fields.push((fname, fspan));
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace, "Expected '}' to close struct body")?;
+        Ok(RawStruct { name, fields, span })
+    }
+
     fn parse_layout(&mut self) -> Result<RawLayout, AxiomDiagnostic> {
         let tok = self.expect(&TokenKind::Layout, "Expected 'layout'")?;
         let (name, _) = self.expect_ident("Expected layout name after 'layout'")?;
@@ -623,10 +686,10 @@ impl Parser {
         while !matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
             let (fname, fspan) = self.expect_ident("Expected layout field name")?;
             self.expect(&TokenKind::Colon, "Expected ':' after layout field name")?;
-            let (kind_kw, kind_span) =
-                self.expect_ident("Expected 'word' or 'words[N]' for layout field type")?;
-            let (is_array, len_expr) = match kind_kw.as_str() {
-                "word" => (false, None),
+            let (kind_kw, _) =
+                self.expect_ident("Expected 'word', 'words[N]', 'Struct', or 'Struct[N]'")?;
+            let (struct_type, is_array, len_expr) = match kind_kw.as_str() {
+                "word" => (None, false, None),
                 "words" => {
                     self.expect(
                         &TokenKind::LBracket,
@@ -634,16 +697,17 @@ impl Parser {
                     )?;
                     let len = self.parse_expr()?;
                     self.expect(&TokenKind::RBracket, "Expected ']' after words length")?;
-                    (true, Some(len))
+                    (None, true, Some(len))
                 }
                 other => {
-                    return Err(AxiomDiagnostic::new(
-                        "E010_UNEXPECTED_TOKEN",
-                        "parse",
-                        format!("Unknown layout field type '{other}'; expected 'word' or 'words[N]'"),
-                        kind_span,
-                        "Use 'field: word' for a single 32-bit word slot or 'buf: words[N]' for a buffer",
-                    ));
+                    if matches!(self.peek().kind, TokenKind::LBracket) {
+                        self.advance();
+                        let len = self.parse_expr()?;
+                        self.expect(&TokenKind::RBracket, "Expected ']' after struct array length")?;
+                        (Some(other.to_string()), true, Some(len))
+                    } else {
+                        (Some(other.to_string()), false, None)
+                    }
                 }
             };
             let at_expr = if self.peek_is_contextual_kw("at") {
@@ -654,6 +718,7 @@ impl Parser {
             };
             fields.push(RawLayoutField {
                 name: fname,
+                struct_type,
                 len_expr,
                 is_array,
                 at_expr,
@@ -853,14 +918,36 @@ impl Parser {
                     value: val,
                 }));
             }
-            // Layout word-field assignment: `Layout.field = e;` or `Layout.field += e;`
+            // Layout assignment: `Layout.field`, `Layout.field[i]`, `Layout.field.sub`, `Layout.field[i].sub`
             if matches!(self.peek_at(1), TokenKind::Dot)
                 && matches!(self.peek_at(2), TokenKind::Ident(_))
             {
-                if let Some(op) = Self::assign_op_for(self.peek_at(3)) {
-                    let (layout, span) = self.expect_ident("Expected layout name")?;
-                    self.advance(); // '.'
-                    let (field, _) = self.expect_ident("Expected layout field name")?;
+                let saved = self.idx;
+                let (layout, span) = self.expect_ident("Expected layout name")?;
+                self.advance(); // '.'
+                let (field, _) = self.expect_ident("Expected layout field name")?;
+                let index = if matches!(self.peek().kind, TokenKind::LBracket) {
+                    self.advance();
+                    let idx_expr = self.parse_expr()?;
+                    if !matches!(self.peek().kind, TokenKind::RBracket) {
+                        self.idx = saved;
+                        return Ok(None);
+                    }
+                    self.advance();
+                    Some(idx_expr)
+                } else {
+                    None
+                };
+                let subfield = if matches!(self.peek().kind, TokenKind::Dot)
+                    && matches!(self.peek_at(1), TokenKind::Ident(_))
+                {
+                    self.advance();
+                    let (sf, _) = self.expect_ident("Expected struct field name")?;
+                    Some(sf)
+                } else {
+                    None
+                };
+                if let Some(op) = Self::assign_op_for(&self.peek().kind) {
                     self.advance(); // assignment op
                     let val = self.parse_expr()?;
                     self.expect(
@@ -870,11 +957,14 @@ impl Parser {
                     return Ok(Some(RawStmt::LayoutStore {
                         layout,
                         field,
+                        index,
+                        subfield,
                         op,
                         value: val,
                         span,
                     }));
                 }
+                self.idx = saved;
             }
         }
         Ok(None)
@@ -1506,9 +1596,26 @@ impl Parser {
                 } else if matches!(self.peek().kind, TokenKind::Dot) {
                     self.advance();
                     let (field, _) = self.expect_ident("Expected layout field name after '.'")?;
+                    let index = if matches!(self.peek().kind, TokenKind::LBracket) {
+                        self.advance();
+                        let idx_expr = self.parse_expr()?;
+                        self.expect(&TokenKind::RBracket, "Expected ']' after layout index")?;
+                        Some(Box::new(idx_expr))
+                    } else {
+                        None
+                    };
+                    let subfield = if matches!(self.peek().kind, TokenKind::Dot) {
+                        self.advance();
+                        let (sf, _) = self.expect_ident("Expected struct field name after '.'")?;
+                        Some(sf)
+                    } else {
+                        None
+                    };
                     Ok(RawExpr::LayoutLoad {
                         layout: name,
                         field,
+                        index,
+                        subfield,
                         span: tok.span,
                     })
                 } else if matches!(self.peek().kind, TokenKind::LParen) {
@@ -1561,12 +1668,15 @@ impl Parser {
 struct ModuleResolver {
     consts: BTreeMap<String, ConstDef>,
     enums: BTreeMap<String, EnumDef>,
+    structs: BTreeMap<String, StructDef>,
     layouts: BTreeMap<String, LayoutDef>,
+    layout_field_meta: BTreeMap<(String, String), LayoutFieldMeta>,
     consts_order: Vec<ConstDef>,
     enums_order: Vec<EnumDef>,
     layouts_order: Vec<LayoutDef>,
     layout_spans: Vec<(i64, i64, String, Span)>,
     match_counter: usize,
+    addr_counter: usize,
 }
 
 impl ModuleResolver {
@@ -1574,12 +1684,15 @@ impl ModuleResolver {
         Self {
             consts: BTreeMap::new(),
             enums: BTreeMap::new(),
+            structs: BTreeMap::new(),
             layouts: BTreeMap::new(),
+            layout_field_meta: BTreeMap::new(),
             consts_order: Vec::new(),
             enums_order: Vec::new(),
             layouts_order: Vec::new(),
             layout_spans: Vec::new(),
             match_counter: 0,
+            addr_counter: 0,
         }
     }
 
@@ -1801,12 +1914,30 @@ impl ModuleResolver {
                 format!("Check the fields declared in 'layout {head}'"),
             ));
         }
+        if let Some(sdef) = self.structs.get(head) {
+            if member == "SIZE" || member == "size" {
+                return Ok(sdef.size);
+            }
+            if let Some(&off) = sdef.fields.get(member) {
+                return Ok(off);
+            }
+            return Err(AxiomDiagnostic::new(
+                "E061_UNKNOWN_LAYOUT_FIELD",
+                "resolve",
+                format!("Struct '{head}' has no field '{member}'"),
+                span,
+                format!(
+                    "Available fields in 'struct {head}': {} (plus '::SIZE')",
+                    sdef.field_names.join(", ")
+                ),
+            ));
+        }
         Err(AxiomDiagnostic::new(
             "E061_UNKNOWN_ENUM_VARIANT",
             "resolve",
-            format!("Unknown enum or layout '{head}' in '{head}::{member}'"),
+            format!("Unknown enum, struct, or layout '{head}' in '{head}::{member}'"),
             span,
-            format!("Declare 'enum {head}' or 'layout {head}' (or import it with 'use')"),
+            format!("Declare 'enum {head}', 'struct {head}', or 'layout {head}' (or import it with 'use')"),
         ))
     }
 
@@ -1839,25 +1970,33 @@ impl ModuleResolver {
                     format!("Check the fields declared in 'layout {head}'"),
                 )
             })?;
+        let meta = self
+            .layout_field_meta
+            .get(&(head.to_string(), member.to_string()));
         match prop {
             "len" => Ok(field.len),
             "end" => Ok(field.offset + field.len),
+            "stride" => Ok(meta.map(|m| m.stride).unwrap_or(1)),
+            "count" => Ok(meta.map(|m| m.count).unwrap_or(field.len)),
             other => Err(AxiomDiagnostic::new(
                 "E061_UNKNOWN_LAYOUT_FIELD",
                 "resolve",
                 format!("Unknown layout field property '{other}' on '{head}::{member}'"),
                 span,
-                "Supported layout field properties are '::len' and '::end'",
+                "Supported layout field properties are '::len', '::end', '::stride', and '::count'",
             )),
         }
     }
 
-    fn resolve_layout_word_offset(
-        &self,
+    fn lower_layout_addr_expr(
+        &mut self,
         layout: &str,
         field: &str,
+        index: Option<&RawExpr>,
+        subfield: Option<&str>,
+        locals: &mut Vec<BTreeSet<String>>,
         span: Span,
-    ) -> Result<i64, AxiomDiagnostic> {
+    ) -> Result<Expr, AxiomDiagnostic> {
         let ldef = self.layouts.get(layout).ok_or_else(|| {
             AxiomDiagnostic::new(
                 "E061_UNKNOWN_LAYOUT_FIELD",
@@ -1867,34 +2006,140 @@ impl ModuleResolver {
                 format!("Declare 'layout {layout}' before accessing '{layout}.{field}'"),
             )
         })?;
-        let fdef = ldef
-            .fields
-            .iter()
-            .find(|f| f.name == field)
+        if !ldef.fields.iter().any(|f| f.name == field) {
+            let names: Vec<&str> = ldef.fields.iter().take(12).map(|f| f.name.as_str()).collect();
+            return Err(AxiomDiagnostic::new(
+                "E061_UNKNOWN_LAYOUT_FIELD",
+                "resolve",
+                format!("Layout '{layout}' has no field '{field}'"),
+                span,
+                format!("Available fields in 'layout {layout}': {}", names.join(", ")),
+            ));
+        }
+        let meta = self
+            .layout_field_meta
+            .get(&(layout.to_string(), field.to_string()))
+            .cloned()
             .ok_or_else(|| {
                 AxiomDiagnostic::new(
                     "E061_UNKNOWN_LAYOUT_FIELD",
                     "resolve",
-                    format!("Layout '{layout}' has no field '{field}'"),
+                    format!("Missing layout metadata for '{layout}.{field}'"),
                     span,
-                    format!("Check the fields declared in 'layout {layout}'"),
+                    "Internal layout metadata error",
                 )
             })?;
-        if fdef.is_array {
+
+        if meta.is_array && index.is_none() {
+            let hint = match &meta.struct_type {
+                Some(_) => format!(
+                    "Use '{layout}.{field}[i].<field>' to access an element, or '{layout}::{field}' for the base word address"
+                ),
+                None => format!(
+                    "Use '{layout}.{field}[i]' to access an element, or '{layout}::{field}' for the base word address"
+                ),
+            };
             return Err(AxiomDiagnostic::new(
                 "E061_LAYOUT_ARRAY_ACCESS",
                 "resolve",
-                format!(
-                    "Cannot use direct scalar access '{layout}.{field}' on array buffer 'words[{}]'",
-                    fdef.len
-                ),
+                format!("Array field '{layout}.{field}' requires an index '[i]'"),
                 span,
-                format!(
-                    "Use 'mem_load({layout}::{field} + idx)' / 'mem_store({layout}::{field} + idx, val)' for buffer fields"
-                ),
+                hint,
             ));
         }
-        Ok(fdef.offset)
+        if !meta.is_array && index.is_some() {
+            return Err(AxiomDiagnostic::new(
+                "E061_LAYOUT_ARRAY_ACCESS",
+                "resolve",
+                format!("Field '{layout}.{field}' is not an array; cannot index with '[...]'"),
+                span,
+                format!("Remove '[...]' or declare '{field}' as 'words[N]' / 'Struct[N]' in 'layout {layout}'"),
+            ));
+        }
+
+        let sub_off: i64 = match (&meta.struct_type, subfield) {
+            (Some(sname), Some(sf)) => {
+                let sdef = self.structs.get(sname).ok_or_else(|| {
+                    AxiomDiagnostic::new(
+                        "E061_UNKNOWN_LAYOUT_FIELD",
+                        "resolve",
+                        format!("Unknown struct type '{sname}'"),
+                        span,
+                        format!("Declare 'struct {sname} {{ ... }}'"),
+                    )
+                })?;
+                *sdef.fields.get(sf).ok_or_else(|| {
+                    AxiomDiagnostic::new(
+                        "E061_UNKNOWN_LAYOUT_FIELD",
+                        "resolve",
+                        format!("Struct '{sname}' has no field '{sf}'"),
+                        span,
+                        format!(
+                            "Available fields in 'struct {sname}': {}",
+                            sdef.field_names.join(", ")
+                        ),
+                    )
+                })?
+            }
+            (Some(sname), None) => {
+                let first = self
+                    .structs
+                    .get(sname)
+                    .and_then(|s| s.field_names.first())
+                    .map(|s| s.as_str())
+                    .unwrap_or("x");
+                return Err(AxiomDiagnostic::new(
+                    "E061_UNKNOWN_LAYOUT_FIELD",
+                    "resolve",
+                    format!(
+                        "Struct field '{layout}.{field}' of type '{sname}' requires a subfield access"
+                    ),
+                    span,
+                    format!(
+                        "Access a specific field, e.g. '{layout}.{field}{}.{first}'",
+                        if meta.is_array { "[i]" } else { "" }
+                    ),
+                ));
+            }
+            (None, Some(sf)) => {
+                return Err(AxiomDiagnostic::new(
+                    "E061_UNKNOWN_LAYOUT_FIELD",
+                    "resolve",
+                    format!(
+                        "Field '{layout}.{field}' is a plain word, not a struct; cannot access '.{sf}'"
+                    ),
+                    span,
+                    format!("Remove '.{sf}' or declare '{field}' with a struct type"),
+                ));
+            }
+            (None, None) => 0,
+        };
+
+        let base_word = meta.offset + sub_off;
+        match index {
+            None => Ok(Expr::IntLit(base_word)),
+            Some(idx_raw) => {
+                let idx_expr = self.lower_expr(idx_raw, locals)?;
+                let scaled = if meta.stride == 1 {
+                    idx_expr
+                } else {
+                    Expr::Binary {
+                        op: BinOp::Mul,
+                        lhs: Box::new(idx_expr),
+                        rhs: Box::new(Expr::IntLit(meta.stride)),
+                    }
+                };
+                if base_word == 0 {
+                    Ok(scaled)
+                } else {
+                    Ok(Expr::Binary {
+                        op: BinOp::Add,
+                        lhs: Box::new(Expr::IntLit(base_word)),
+                        rhs: Box::new(scaled),
+                    })
+                }
+            }
+        }
     }
 
     fn register_item(&mut self, item: RawItem) -> Result<(), AxiomDiagnostic> {
@@ -1984,9 +2229,57 @@ impl ModuleResolver {
                 self.enums.insert(re.name, def.clone());
                 self.enums_order.push(def);
             }
+            RawItem::Struct(rs) => {
+                if self.consts.contains_key(&rs.name)
+                    || self.enums.contains_key(&rs.name)
+                    || self.structs.contains_key(&rs.name)
+                    || self.layouts.contains_key(&rs.name)
+                {
+                    return Err(AxiomDiagnostic::new(
+                        "E065_DUPLICATE_DECL",
+                        "resolve",
+                        format!("Duplicate top-level declaration '{}'", rs.name),
+                        rs.span,
+                        "Rename the struct so every top-level const/enum/struct/layout name is unique",
+                    ));
+                }
+                if rs.fields.is_empty() {
+                    return Err(AxiomDiagnostic::new(
+                        "E064_CONST_EVAL",
+                        "layout",
+                        format!("Struct '{}' must declare at least one field", rs.name),
+                        rs.span,
+                        "Add at least one 'field: word' inside the struct body",
+                    ));
+                }
+                let mut fields = BTreeMap::new();
+                let mut field_names = Vec::with_capacity(rs.fields.len());
+                for (idx, (fname, fspan)) in rs.fields.into_iter().enumerate() {
+                    if fields.insert(fname.clone(), idx as i64).is_some() {
+                        return Err(AxiomDiagnostic::new(
+                            "E065_DUPLICATE_DECL",
+                            "layout",
+                            format!("Duplicate field '{}' in struct '{}'", fname, rs.name),
+                            fspan,
+                            "Ensure all field names within a struct are unique",
+                        ));
+                    }
+                    field_names.push(fname);
+                }
+                let size = field_names.len() as i64;
+                self.structs.insert(
+                    rs.name,
+                    StructDef {
+                        fields,
+                        field_names,
+                        size,
+                    },
+                );
+            }
             RawItem::Layout(rl) => {
                 if self.consts.contains_key(&rl.name)
                     || self.enums.contains_key(&rl.name)
+                    || self.structs.contains_key(&rl.name)
                     || self.layouts.contains_key(&rl.name)
                 {
                     return Err(AxiomDiagnostic::new(
@@ -1994,7 +2287,7 @@ impl ModuleResolver {
                         "resolve",
                         format!("Duplicate top-level declaration '{}'", rl.name),
                         rl.span,
-                        "Rename the layout so every top-level const/enum/layout name is unique",
+                        "Rename the layout so every top-level const/enum/struct/layout name is unique",
                     ));
                 }
                 let base = match rl.base_expr {
@@ -2025,7 +2318,25 @@ impl ModuleResolver {
                             "Ensure all field names within a layout are unique",
                         ));
                     }
-                    let len = match rf.len_expr {
+                    let stride = match &rf.struct_type {
+                        Some(sname) => {
+                            let sdef = self.structs.get(sname).ok_or_else(|| {
+                                AxiomDiagnostic::new(
+                                    "E061_UNKNOWN_LAYOUT_FIELD",
+                                    "layout",
+                                    format!(
+                                        "Unknown type '{}' for layout field '{}::{}'",
+                                        sname, rl.name, rf.name
+                                    ),
+                                    rf.span,
+                                    "Use 'word', 'words[N]', or declare 'struct TypeName { ... }' before this layout",
+                                )
+                            })?;
+                            sdef.size
+                        }
+                        None => 1,
+                    };
+                    let count = match rf.len_expr {
                         Some(ref expr) => {
                             let l = self.eval_const_i64(
                                 expr,
@@ -2041,13 +2352,16 @@ impl ModuleResolver {
                                         rl.name, rf.name
                                     ),
                                     rf.span,
-                                    "Use a positive integer length for 'words[N]'",
+                                    "Use a positive integer length for '[N]'",
                                 ));
                             }
                             l
                         }
                         None => 1,
                     };
+                    let len = count
+                        .checked_mul(stride)
+                        .ok_or_else(|| const_overflow("*", rf.span))?;
                     let offset = match rf.at_expr {
                         Some(ref expr) => {
                             let o = self.eval_const_i64(
@@ -2081,6 +2395,16 @@ impl ModuleResolver {
                         format!("{}::{}", rl.name, rf.name),
                         rf.span,
                     ));
+                    self.layout_field_meta.insert(
+                        (rl.name.clone(), rf.name.clone()),
+                        LayoutFieldMeta {
+                            offset,
+                            is_array: rf.is_array,
+                            struct_type: rf.struct_type,
+                            stride,
+                            count,
+                        },
+                    );
                     fields.push(LayoutField {
                         name: rf.name,
                         offset,
@@ -2204,26 +2528,64 @@ impl ModuleResolver {
                 RawStmt::LayoutStore {
                     layout,
                     field,
+                    index,
+                    subfield,
                     op,
                     value,
                     span,
                 } => {
-                    let offset = self.resolve_layout_word_offset(layout, field, *span)?;
+                    let addr_expr = self.lower_layout_addr_expr(
+                        layout,
+                        field,
+                        index.as_ref(),
+                        subfield.as_deref(),
+                        locals,
+                        *span,
+                    )?;
                     let rhs = self.lower_expr(value, locals)?;
-                    let final_val = match op {
-                        None => rhs,
-                        Some(binop) => Expr::Binary {
-                            op: *binop,
-                            lhs: Box::new(Expr::MemLoad {
-                                index: Box::new(Expr::IntLit(offset)),
-                            }),
-                            rhs: Box::new(rhs),
-                        },
-                    };
-                    out.push(Stmt::Expr(Expr::MemStore {
-                        index: Box::new(Expr::IntLit(offset)),
-                        value: Box::new(final_val),
-                    }));
+                    match op {
+                        None => {
+                            out.push(Stmt::Expr(Expr::MemStore {
+                                index: Box::new(addr_expr),
+                                value: Box::new(rhs),
+                            }));
+                        }
+                        Some(binop) => {
+                            if index.is_some() {
+                                let tmp = format!("__ax_laddr_{}", self.addr_counter);
+                                self.addr_counter += 1;
+                                out.push(Stmt::Let {
+                                    name: tmp.clone(),
+                                    mutable: false,
+                                    ty: Some(Type::I64),
+                                    value: addr_expr,
+                                });
+                                let final_val = Expr::Binary {
+                                    op: *binop,
+                                    lhs: Box::new(Expr::MemLoad {
+                                        index: Box::new(Expr::Var(tmp.clone())),
+                                    }),
+                                    rhs: Box::new(rhs),
+                                };
+                                out.push(Stmt::Expr(Expr::MemStore {
+                                    index: Box::new(Expr::Var(tmp)),
+                                    value: Box::new(final_val),
+                                }));
+                            } else {
+                                let final_val = Expr::Binary {
+                                    op: *binop,
+                                    lhs: Box::new(Expr::MemLoad {
+                                        index: Box::new(addr_expr.clone()),
+                                    }),
+                                    rhs: Box::new(rhs),
+                                };
+                                out.push(Stmt::Expr(Expr::MemStore {
+                                    index: Box::new(addr_expr),
+                                    value: Box::new(final_val),
+                                }));
+                            }
+                        }
+                    }
                 }
                 RawStmt::While {
                     cond,
@@ -2296,11 +2658,20 @@ impl ModuleResolver {
             RawExpr::LayoutLoad {
                 layout,
                 field,
+                index,
+                subfield,
                 span,
             } => {
-                let offset = self.resolve_layout_word_offset(layout, field, *span)?;
+                let addr_expr = self.lower_layout_addr_expr(
+                    layout,
+                    field,
+                    index.as_deref(),
+                    subfield.as_deref(),
+                    locals,
+                    *span,
+                )?;
                 Ok(Expr::MemLoad {
-                    index: Box::new(Expr::IntLit(offset)),
+                    index: Box::new(addr_expr),
                 })
             }
             RawExpr::Unary { op, expr: inner } => Ok(Expr::Unary {
@@ -2780,4 +3151,62 @@ fn resolve_and_lower(
         formas,
         functions,
     })
+}
+
+#[cfg(test)]
+mod struct_layout_tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_lowers_structs_and_indexed_arrays() {
+        let src = r#"
+struct Sheep {
+  x: word,
+  z: word,
+  vx: word,
+  alive: word,
+}
+
+layout GameMem at 0 {
+  tick: word,
+  hero: Sheep,
+  flock: Sheep[8] at 20,
+  board: words[16] at 100,
+}
+
+fn step(i: i64) -[Mem]-> i64 req i >= 0 && i < 8 {
+  GameMem.tick += 1;
+  GameMem.hero.x = 42;
+  GameMem.hero.vx += 3;
+  GameMem.flock[i].x += GameMem.flock[i].vx;
+  GameMem.board[i] = Sheep::SIZE + GameMem::flock::stride + GameMem::flock::count;
+  GameMem.flock[i].x + GameMem.board[i] + GameMem.hero.x
+}
+"#;
+        let module = parse_module(src).expect("struct + indexed layout should parse cleanly");
+        assert_eq!(module.layouts.len(), 1);
+        let l = &module.layouts[0];
+        let flock = l.fields.iter().find(|f| f.name == "flock").unwrap();
+        assert_eq!(flock.offset, 20);
+        assert_eq!(flock.len, 32); // 8 * 4 words
+        assert!(flock.is_array);
+    }
+
+    #[test]
+    fn unknown_struct_field_lists_available_fields_in_hint() {
+        let src = r#"
+struct Vec2 {
+  x: word,
+  y: word,
+}
+layout M at 0 {
+  p: Vec2,
+}
+fn bad() -[Mem]-> i64 {
+  M.p.z
+}
+"#;
+        let err = parse_module(src).expect_err("should fail on unknown subfield");
+        assert!(err.repair_hint.contains("x, y"), "hint was: {}", err.repair_hint);
+    }
 }
