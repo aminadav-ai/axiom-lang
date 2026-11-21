@@ -6,6 +6,9 @@
 // by axiom-web at word 48106) for smooth 60 FPS games & 3D movement.
 
 const STD_KEYS_HELD_WORD: i64 = 48106;
+const STD_MOUSE_DX_WORD: i64 = 48107;
+const STD_MOUSE_DY_WORD: i64 = 48108;
+const STD_POINTER_LOCK_WORD: i64 = 48109;
 
 const KEY_W: i64 = 1;
 const KEY_A: i64 = 2;
@@ -27,4 +30,22 @@ fn keys_held_mask() -[Mem]-> i64 {
 
 fn key_held(bit: i64) -[Mem]-> bool {
   (mem_load(STD_KEYS_HELD_WORD) & bit) != 0
+}
+
+// Per-frame relative mouse motion delta while pointer lock is active (infinite 360° look)
+fn mouse_dx() -[Mem]-> i64 {
+  mem_load(STD_MOUSE_DX_WORD)
+}
+
+fn mouse_dy() -[Mem]-> i64 {
+  mem_load(STD_MOUSE_DY_WORD)
+}
+
+fn pointer_locked() -[Mem]-> bool {
+  mem_load(STD_POINTER_LOCK_WORD) != 0
+}
+
+// Request browser pointer lock (hides cursor & enables raw relative mouse motion; Esc always unlocks)
+fn set_pointer_lock(lock: bool) -[Gpu]-> unit {
+  do Gpu.call(65, if lock { 1 } else { 0 }, 0, 0);
 }

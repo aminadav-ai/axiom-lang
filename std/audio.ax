@@ -7,9 +7,9 @@
 
 use "std/math.ax";
 
-const SFX_CLICK: i64 = 1;
-const SFX_CLACK: i64 = 2;
-const SFX_HOP: i64 = 3;
+const SFX_CLACK: i64 = 1;
+const SFX_HOP: i64 = 2;
+const SFX_CLICK: i64 = 3;
 const SFX_SPAWN: i64 = 4;
 const SFX_CLEAR: i64 = 5;
 const SFX_ERROR: i64 = 6;

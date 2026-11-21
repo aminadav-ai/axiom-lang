@@ -140,6 +140,10 @@ const MAT_TILE: i64 = 6;   // Beveled stone floor / ceiling tiles
 const MAT_SKY: i64 = 7;    // Animated crimson stormy Quake sky (emissive)
 const MAT_WOOD: i64 = 8;   // Wooden planks / crates
 const MAT_GLOW: i64 = 9;   // Emissive torch / energy core
+const MAT_MARBLE: i64 = 10; // Carved veined marble tile with inlaid golden socket ring
+const MAT_WALNUT: i64 = 11; // Burled walnut wood with satin varnish
+const MAT_GLASS_SPHERE: i64 = 12; // Analytical ray-shaded 3D refractive glass sphere (Fresnel + dual specular)
+const MAT_SHADOW_CAUSTIC: i64 = 13; // Soft contact shadow + colored gemstone floor caustic
 
 const FOG_DARK: i64 = 0;   // Dark dungeon depth fog
 const FOG_RED: i64 = 1;    // Crimson volcanic depth fog
