@@ -196,6 +196,10 @@ fn resolve_embedded_std(spec: &str) -> Option<(&'static str, &'static str)> {
         "std/gfx" | "std/gfx.ax" => Some(("__std__/gfx.ax", include_str!("../std/gfx.ax"))),
         "std/text" | "std/text.ax" => Some(("__std__/text.ax", include_str!("../std/text.ax"))),
         "std/audio" | "std/audio.ax" => Some(("__std__/audio.ax", include_str!("../std/audio.ax"))),
+        "std/fmt" | "std/fmt.ax" => Some(("__std__/fmt.ax", include_str!("../std/fmt.ax"))),
+        "std/theme" | "std/theme.ax" => Some(("__std__/theme.ax", include_str!("../std/theme.ax"))),
+        "std/icons" | "std/icons.ax" => Some(("__std__/icons.ax", include_str!("../std/icons.ax"))),
+        "std/ui" | "std/ui.ax" => Some(("__std__/ui.ax", include_str!("../std/ui.ax"))),
         "std/prelude" | "std/prelude.ax" => {
             Some(("__std__/prelude.ax", include_str!("../std/prelude.ax")))
         }
@@ -218,7 +222,7 @@ fn load_std_recursive(
             "parse",
             format!("Unknown built-in Axiom stdlib module '{spec}'"),
             use_span,
-            "Available stdlib modules: std/prelude.ax, std/math.ax, std/color.ax, std/gfx.ax, std/text.ax",
+            "Available stdlib modules: std/prelude.ax, std/math.ax, std/color.ax, std/gfx.ax, std/text.ax, std/audio.ax, std/fmt.ax, std/theme.ax, std/icons.ax, std/ui.ax",
         ));
     };
     let canon = PathBuf::from(virtual_key);

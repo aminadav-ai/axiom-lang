@@ -402,3 +402,80 @@ export fn axw_unicode_atlas() -[Mem]-> i64 { 1 }
 
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn test_std_stage2_ui_kit_z3_and_headless_exec() {
+    let src = r#"
+use "std/prelude.ax";
+
+export fn init_app() -[Mem]-> unit {
+  ()
+}
+
+export fn step_ui(vw: i64, vh: i64, mx: i64, my: i64, _m_down: i64, m_clicked: i64, _wheel_dy: i64, _key_char: i64, _key_special: i64) -[Mem, Gpu]-> i64 {
+  mem_store(12, 0);
+  let w = clamp_i64(vw, 320, 2560);
+  let h = clamp_i64(vh, 240, 1440);
+  let th = THEME_DARK;
+  let sz = theme_scale(14, 100);
+  ui_rect(0, 0, w, h, 0, 0, 0, theme_bg(th), 0, 0);
+  ui_card(16, 16, w - 32, h - 32, th, 10, 0);
+  let bw = ui_badge(28, 28, "Forma 2.0", 13, theme_accent(), pack_rgba(255, 255, 255, 255), 0);
+  let _ = fmt_duration(28 + bw + 12, 32, 2705, 13, theme_text(th), theme_muted(th), 0);
+  let _ = fmt_mb(28, 64, 1192, 13, theme_success(), theme_success(), 0);
+  let _ = fmt_text_ellipsis(28, 90, 180, "Длинная строка, которая должна аккуратно обрезаться с многоточием", sz, 0, theme_text(th), 0);
+  let _ = ui_button(28, 120, 140, 34, "Настройки", sz, th, true, mx, my, m_clicked, 0);
+  ui_progress_bar(28, 168, 220, 10, 76, 100, theme_surf2(th), theme_accent(), 0);
+  ui_scrollbar_v(w - 26, 24, h - 48, 120, 600, h - 48, th, false, 0);
+  ui_divider(28, 192, w - 56, th, 0);
+  icon_folder(28, 204, 16, theme_warn(), 0);
+  icon_check(60, 212, 6, theme_success(), 0);
+  icon_spinner(88, 212, 8, 15, theme_accent(), 0);
+  mem_load(12)
+}
+
+export fn get_cmd_byte_offset() -[Mem]-> i64 { GPU_CMD_BYTE_OFFSET }
+export fn get_clips_byte_offset() -[Mem]-> i64 { GPU_CLIPS_BYTE_OFFSET }
+export fn get_prim_count() -[Mem]-> i64 { mem_load(12) }
+export fn get_cursor_kind() -[Mem]-> i64 { 0 }
+export fn axw_unicode_atlas() -[Mem]-> i64 { 1 }
+"#;
+
+    let ws = temp_workspace("std_stage2_ui_kit");
+    let src_path = ws.join("std_ui_demo.ax");
+    let out_axw = ws.join("std_ui_demo.axw");
+    fs::write(&src_path, src).unwrap();
+
+    let module = parse_module_from_path(&src_path).expect("std Stage 2 UI kit demo should parse");
+    let mut store = GraphStore::open(&ws).unwrap();
+    let artifact =
+        build_strata_wasm_from_module_with_cache(&mut store, &module, &out_axw, false)
+            .expect("std Stage 2 UI kit demo should pass Z3 verification and compile to .axw");
+    assert!(artifact.wasm_size_bytes > 0);
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let axiom_web_bin = std::env::var_os("AXIOM_WEB_BIN")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            manifest_dir
+                .parent()
+                .map(|p| p.join("axiom-web/target/release/axiom-web"))
+        })
+        .filter(|p| p.is_file());
+
+    if let Some(axiom_web_bin) = axiom_web_bin {
+        let output = Command::new(&axiom_web_bin)
+            .arg(&out_axw)
+            .arg("--headless-check")
+            .output()
+            .expect("failed to execute axiom-web --headless-check");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("HEADLESS_OK"),
+            "std Stage 2 UI kit headless-check failed:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&ws);
+}
