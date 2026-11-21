@@ -127,3 +127,64 @@ fn ui_quad_3d(
   ui_tri(x0, y0, x1, y1, x2, y2, col1, col2, light_1000, clip);
   ui_tri(x0, y0, x2, y2, x3, y3, col1, col2, light_1000, clip);
 }
+
+// --- Hardware Z-Buffered Perspective-Textured 3D Pipeline (kind = 9) ---
+// Procedural GPU materials (zero external assets, 60 FPS):
+const MAT_SOLID: i64 = 0;  // Smooth tinted surface
+const MAT_BRICK: i64 = 1;  // Gothic bricks with dark mortar, stone grain & moss
+const MAT_PILLAR: i64 = 2; // Weathered temple stone column with bands & rust
+const MAT_METAL: i64 = 3;  // Ribbed dark techno-metal (weapons, frames)
+const MAT_PORTAL: i64 = 4; // Animated glowing Slipgate vortex (emissive)
+const MAT_LAVA: i64 = 5;   // Animated glowing lava / magma (emissive)
+const MAT_TILE: i64 = 6;   // Beveled stone floor / ceiling tiles
+const MAT_SKY: i64 = 7;    // Animated crimson stormy Quake sky (emissive)
+const MAT_WOOD: i64 = 8;   // Wooden planks / crates
+const MAT_GLOW: i64 = 9;   // Emissive torch / energy core
+
+const FOG_DARK: i64 = 0;   // Dark dungeon depth fog
+const FOG_RED: i64 = 1;    // Crimson volcanic depth fog
+const FOG_NONE: i64 = 2;   // No fog (e.g. first-person 3D weapon / sky)
+
+// Hardware Z-buffered perspective-correct 3D triangle (kind = 9).
+// z0..z2: vertex depth in 1..1023 (e.g. world_z * 16).
+// u0..v2: texture UV in 0..255 (64 = 1.0 tile repeat, 255 = ~4.0 repeats).
+// light_255: 0..255 surface lighting (255 = full bright).
+fn ui_tri_3d(
+  x0: i64, y0: i64, z0: i64, u0: i64, v0: i64,
+  x1: i64, y1: i64, z1: i64, u1: i64, v1: i64,
+  x2: i64, y2: i64, z2: i64, u2: i64, v2: i64,
+  mat: i64, col: i64, light_255: i64, fog_mode: i64, clip: i64
+) -[Mem]-> unit {
+  let w0 = pack_s16_xy(x0, y0);
+  let w1 = pack_s16_xy(x1, y1);
+  let w2 = pack_s16_xy(x2, y2);
+  let cz0 = clamp_i64(z0, 1, 1023);
+  let cz1 = clamp_i64(z1, 1, 1023);
+  let cz2 = clamp_i64(z2, 1, 1023);
+  let w3 = cz0 | (cz1 << 10) | (cz2 << 20);
+  let cu0 = clamp_i64(u0, 0, 255);
+  let cv0 = clamp_i64(v0, 0, 255);
+  let cu1 = clamp_i64(u1, 0, 255);
+  let cv1 = clamp_i64(v1, 0, 255);
+  let cu2 = clamp_i64(u2, 0, 255);
+  let cv2 = clamp_i64(v2, 0, 255);
+  let m = clamp_i64(mat, 0, 15);
+  let lit = clamp_i64(light_255, 0, 255);
+  let meta = 9 | (m << 4) | (lit << 8) | (cu0 << 16) | (cv0 << 24);
+  let uv12 = cu1 | (cv1 << 8) | (cu2 << 16) | (cv2 << 24);
+  let cclip = (clamp_i64(clip, 0, 15)) | ((clamp_i64(fog_mode, 0, 3)) << 4);
+  push_prim(w0, w1, w2, w3, meta, col, uv12, cclip);
+}
+
+// Hardware Z-buffered perspective-textured 3D quad (p0 -> p1 -> p2 -> p3).
+// u_rep, v_rep: texture tiling in 0..255 (64 = 1x1 tile, 128 = 2x2, 255 = 4x4).
+fn ui_quad_3d_mat(
+  x0: i64, y0: i64, z0: i64,
+  x1: i64, y1: i64, z1: i64,
+  x2: i64, y2: i64, z2: i64,
+  x3: i64, y3: i64, z3: i64,
+  u_rep: i64, v_rep: i64, mat: i64, col: i64, light_255: i64, fog_mode: i64, clip: i64
+) -[Mem]-> unit {
+  ui_tri_3d(x0, y0, z0, 0, 0, x1, y1, z1, u_rep, 0, x2, y2, z2, u_rep, v_rep, mat, col, light_255, fog_mode, clip);
+  ui_tri_3d(x0, y0, z0, 0, 0, x2, y2, z2, u_rep, v_rep, x3, y3, z3, 0, v_rep, mat, col, light_255, fog_mode, clip);
+}
