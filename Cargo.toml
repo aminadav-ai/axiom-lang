@@ -3,7 +3,7 @@ name = "axiom-lang"
 version = "0.2.0"
 edition = "2021"
 description = "Axiom: Content-addressed, Z3-verified AI-native programming language"
-license = "BUSL-1.1"
+license = "Apache-2.0"
 publish = false
 
 [lib]

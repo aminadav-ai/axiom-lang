@@ -2,7 +2,7 @@
 
 [![Axiom CI](https://github.com/aminadav-ai/axiom-lang/actions/workflows/ci.yml/badge.svg)](https://github.com/aminadav-ai/axiom-lang/actions/workflows/ci.yml)
 [![Deploy Showcase](https://github.com/aminadav-ai/axiom-lang/actions/workflows/pages.yml/badge.svg)](https://aminadav-ai.github.io/axiom-lang/)
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 > **Official Axiom Ecosystem Website & Live Launcher:** **[https://axiom-lang.org](https://axiom-lang.org)**  
 > **Stages 3 & 4 — Hybrid AI-First IDE & Shell (`2.54 MB` Daemon + `11.68 KB` Cyrillic/EN GPU Wasm):** **[Axiom Studio v1.0](https://axiom-lang.org/axiom-studio/)** ([Repo](https://github.com/aminadav-ai/axiom-studio))  
@@ -138,4 +138,4 @@ cargo run -- run checkout "sk_live_secret_token" 10000 --trace
 
 ## License
 
-Copyright (c) 2026 Yehuda Aminadav. Dual-licensed under **Business Source License 1.1 (`BUSL-1.1`)**—free for personal, academic, educational, non-commercial research, and evaluation use—and a separate **Commercial License** for commercial production deployments. See [LICENSE](LICENSE) and [CONTRIBUTING.md](CONTRIBUTING.md).
+Copyright (c) 2026 Yehuda Aminadav. Licensed under the **Apache License, Version 2.0 (`Apache-2.0`)**. See [LICENSE](LICENSE) and [CONTRIBUTING.md](CONTRIBUTING.md).
