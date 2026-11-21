@@ -5,7 +5,7 @@
 
 use crate::ast::{EffectCap, Param, Type};
 use crate::diag::{AxiomDiagnostic, Span};
-use crate::forma::ast::{Align, FormaDef, FormaNode, FormaNodeKind, FormaProps};
+use crate::forma::ast::{Align, FormaDef, FormaNode, FormaNodeKind, FormaProps, Justify, Overflow};
 use crate::lexer::{Token, TokenKind};
 
 /// Host parser interface supplied by `crate::parser::Parser` so `forma` blocks
@@ -14,6 +14,7 @@ pub(crate) trait FormaHostParser {
     type Expr;
 
     fn peek(&self) -> &Token;
+    fn peek_next_is_colon(&self) -> bool;
     fn advance(&mut self) -> Token;
     fn expect_ident(&mut self, what: &str) -> Result<String, AxiomDiagnostic>;
     fn parse_params(&mut self) -> Result<Vec<Param>, AxiomDiagnostic>;
@@ -121,7 +122,7 @@ fn parse_forma_node<P: FormaHostParser>(p: &mut P) -> Result<FormaNode<P::Expr>,
     })?;
 
     let props = if p.peek().kind == TokenKind::LParen {
-        parse_forma_props(p)?
+        parse_forma_props(p, kind)?
     } else {
         FormaProps::default()
     };
@@ -143,12 +144,21 @@ fn parse_forma_node<P: FormaHostParser>(p: &mut P) -> Result<FormaNode<P::Expr>,
     })
 }
 
-fn parse_forma_props<P: FormaHostParser>(p: &mut P) -> Result<FormaProps<P::Expr>, AxiomDiagnostic> {
+fn parse_forma_props<P: FormaHostParser>(
+    p: &mut P,
+    kind: FormaNodeKind,
+) -> Result<FormaProps<P::Expr>, AxiomDiagnostic> {
     expect_tok(p, &TokenKind::LParen, "'('")?;
     let mut props = FormaProps::default();
 
-    // Support shorthand positional string literal as first argument: `Text("Hello", size: 24, ...)`
-    if matches!(p.peek().kind, TokenKind::Str(_)) {
+    // Support shorthand positional expression as first argument of `Text(...)`:
+    // e.g. `Text("Hello", size: 24)` or `Text(summary, size: 12, shrink: 1)`.
+    let is_named_prop =
+        matches!(p.peek().kind, TokenKind::Ident(_)) && p.peek_next_is_colon();
+    if p.peek().kind != TokenKind::RParen
+        && (matches!(p.peek().kind, TokenKind::Str(_))
+            || (kind == FormaNodeKind::Text && !is_named_prop))
+    {
         props.text = Some(p.parse_expr()?);
         if p.peek().kind == TokenKind::Comma {
             p.advance();
@@ -163,11 +173,28 @@ fn parse_forma_props<P: FormaHostParser>(p: &mut P) -> Result<FormaProps<P::Expr
         match prop_name.as_str() {
             "x" => props.x = Some(p.parse_expr()?),
             "y" => props.y = Some(p.parse_expr()?),
-            "w" => props.w = Some(p.parse_expr()?),
-            "h" => props.h = Some(p.parse_expr()?),
+            "w" => {
+                if matches!(&p.peek().kind, TokenKind::Ident(s) if s == "fit") {
+                    p.advance();
+                    props.w_fit = true;
+                } else {
+                    props.w = Some(p.parse_expr()?);
+                }
+            }
+            "h" => {
+                if matches!(&p.peek().kind, TokenKind::Ident(s) if s == "fit") {
+                    p.advance();
+                    props.h_fit = true;
+                } else {
+                    props.h = Some(p.parse_expr()?);
+                }
+            }
             "min_w" => props.min_w = Some(p.parse_expr()?),
             "min_h" => props.min_h = Some(p.parse_expr()?),
+            "max_w" => props.max_w = Some(p.parse_expr()?),
+            "max_h" => props.max_h = Some(p.parse_expr()?),
             "grow" => props.grow = Some(p.parse_expr()?),
+            "shrink" => props.shrink = Some(p.parse_expr()?),
             "pad" => props.pad = Some(p.parse_expr()?),
             "pad_x" => props.pad_x = Some(p.parse_expr()?),
             "pad_y" => props.pad_y = Some(p.parse_expr()?),
@@ -185,6 +212,36 @@ fn parse_forma_props<P: FormaHostParser>(p: &mut P) -> Result<FormaProps<P::Expr
                     )
                 })?;
                 props.align = Some(align);
+            }
+            "justify" => {
+                let j_span = p.peek().span;
+                let j_name = p.expect_ident(
+                    "justify (start | center | end | space_between | space_around)",
+                )?;
+                let justify = Justify::from_ident(&j_name).ok_or_else(|| {
+                    AxiomDiagnostic::new(
+                        "E091_FORMA_SYNTAX",
+                        "forma-parse",
+                        format!("Invalid justify '{j_name}'"),
+                        j_span,
+                        "Use one of: start, center, end, space_between, space_around",
+                    )
+                })?;
+                props.justify = Some(justify);
+            }
+            "overflow" => {
+                let o_span = p.peek().span;
+                let o_name = p.expect_ident("overflow (visible | clip | ellipsis | wrap)")?;
+                let overflow = Overflow::from_ident(&o_name).ok_or_else(|| {
+                    AxiomDiagnostic::new(
+                        "E091_FORMA_SYNTAX",
+                        "forma-parse",
+                        format!("Invalid overflow '{o_name}'"),
+                        o_span,
+                        "Use one of: visible, clip, ellipsis, wrap",
+                    )
+                })?;
+                props.overflow = Some(overflow);
             }
             "bg" => props.bg = Some(p.parse_expr()?),
             "hover_bg" => props.hover_bg = Some(p.parse_expr()?),
@@ -214,7 +271,7 @@ fn parse_forma_props<P: FormaHostParser>(p: &mut P) -> Result<FormaProps<P::Expr
                     "forma-parse",
                     format!("Unknown Forma property '{other}'"),
                     prop_span,
-                    "Supported properties: x, y, w, h, min_w, min_h, grow, pad, pad_x, pad_y, gap, align, bg, hover_bg, border, border_col, radius, shadow, clip, id, on_click, visible, render, on_wheel, text, size, style, color",
+                    "Supported properties: x, y, w (or fit), h (or fit), min_w, min_h, max_w, max_h, grow, shrink, pad, pad_x, pad_y, gap, align, justify, overflow, bg, hover_bg, border, border_col, radius, shadow, clip, id, on_click, visible, render, on_wheel, text, size, style, color",
                 ));
             }
         }

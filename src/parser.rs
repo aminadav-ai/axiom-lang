@@ -2617,6 +2617,10 @@ impl crate::forma::parser::FormaHostParser for Parser {
         Parser::peek(self)
     }
 
+    fn peek_next_is_colon(&self) -> bool {
+        *self.peek_at(1) == TokenKind::Colon
+    }
+
     fn advance(&mut self) -> Token {
         Parser::advance(self)
     }

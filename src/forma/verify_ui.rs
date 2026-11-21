@@ -12,7 +12,7 @@
 
 use crate::ast::{BinOp, Expr, Module, Param, Type, UnaryOp};
 use crate::diag::{AxiomDiagnostic, Span};
-use crate::forma::ast::{Align, FormaDef, FormaNode, FormaNodeKind};
+use crate::forma::ast::{Align, FormaDef, FormaNode, FormaNodeKind, Justify};
 use crate::verify::{find_z3_binary, normalize_smt_value, parse_sexp_pairs, run_z3};
 use std::collections::BTreeMap;
 
@@ -61,6 +61,8 @@ struct FormaSmtBuilder {
     obligations: Vec<UiObligation>,
     node_counter: usize,
     fresh_counter: usize,
+    intrinsic_w_cache: BTreeMap<usize, String>,
+    intrinsic_h_cache: BTreeMap<usize, String>,
 }
 
 impl FormaSmtBuilder {
@@ -93,6 +95,8 @@ impl FormaSmtBuilder {
             obligations: Vec::new(),
             node_counter: 0,
             fresh_counter: 0,
+            intrinsic_w_cache: BTreeMap::new(),
+            intrinsic_h_cache: BTreeMap::new(),
         }
     }
 
@@ -120,6 +124,173 @@ impl FormaSmtBuilder {
         let id = self.node_counter;
         self.node_counter += 1;
         id
+    }
+
+    fn has_intrinsic_w(node: &FormaNode) -> bool {
+        node.props.w.is_some()
+            || node.props.w_fit
+            || (node.kind == FormaNodeKind::Text && node.props.grow.is_none())
+    }
+
+    fn has_intrinsic_h(node: &FormaNode) -> bool {
+        node.props.h.is_some()
+            || node.props.h_fit
+            || (node.kind == FormaNodeKind::Text && node.props.grow.is_none())
+    }
+
+    fn clamp_min_max_smt(
+        &mut self,
+        expr_smt: String,
+        min_e: &Option<Expr>,
+        max_e: &Option<Expr>,
+    ) -> String {
+        let mut cur = expr_smt;
+        if let Some(mn) = min_e {
+            let mn_s = self.encode_expr(mn);
+            let tmp = self.fresh_int("cmn");
+            self.asserts
+                .push(format!("(assert (= {tmp} (ite (>= {cur} {mn_s}) {cur} {mn_s})))"));
+            cur = tmp;
+        }
+        if let Some(mx) = max_e {
+            let mx_s = self.encode_expr(mx);
+            let tmp = self.fresh_int("cmx");
+            self.asserts
+                .push(format!("(assert (= {tmp} (ite (<= {cur} {mx_s}) {cur} {mx_s})))"));
+            cur = tmp;
+        }
+        cur
+    }
+
+    fn encode_intrinsic_w(&mut self, node: &FormaNode) -> String {
+        let key = node as *const FormaNode as usize;
+        if let Some(cached) = self.intrinsic_w_cache.get(&key) {
+            return cached.clone();
+        }
+        let raw = if let Some(w_expr) = &node.props.w {
+            self.encode_expr(w_expr)
+        } else if node.kind == FormaNodeKind::Text {
+            if let Some(t_expr) = &node.props.text {
+                let sz = self.encode_opt_int(&node.props.size, "16");
+                let tw = self.fresh_int("txtw");
+                match t_expr {
+                    Expr::StrLit(s) => {
+                        let chars = s.chars().count() as i64;
+                        if chars == 0 {
+                            self.asserts.push(format!("(assert (= {tw} 0))"));
+                        } else {
+                            self.asserts.push(format!("(assert (>= {tw} 1))"));
+                            self.asserts
+                                .push(format!("(assert (<= {tw} (* {chars} {sz})))"));
+                        }
+                    }
+                    _ => {
+                        self.asserts.push(format!("(assert (>= {tw} 0))"));
+                    }
+                }
+                tw
+            } else {
+                "0".to_string()
+            }
+        } else {
+            let flow_children: Vec<&FormaNode> = node
+                .children
+                .iter()
+                .filter(|c| !c.kind.is_overlay())
+                .collect();
+            let pad_default = self.encode_opt_int(&node.props.pad, "0");
+            let pad_x = self.encode_opt_int(&node.props.pad_x, &pad_default);
+            let two_pad = format!("(* 2 {pad_x})");
+            if flow_children.is_empty() {
+                two_pad
+            } else if node.kind == FormaNodeKind::Row {
+                let mut terms = Vec::with_capacity(flow_children.len());
+                for c in &flow_children {
+                    terms.push(self.encode_intrinsic_w(c));
+                }
+                let gap = self.encode_opt_int(&node.props.gap, "0");
+                let total_gap = if flow_children.len() > 1 {
+                    format!("(* {} {gap})", flow_children.len() - 1)
+                } else {
+                    "0".to_string()
+                };
+                format!("(+ (+ {} {total_gap}) {two_pad})", smt_sum(&terms))
+            } else {
+                let mut acc: Option<String> = None;
+                for c in &flow_children {
+                    let cw = self.encode_intrinsic_w(c);
+                    acc = Some(match acc {
+                        None => cw,
+                        Some(prev) => {
+                            let m = self.fresh_int("mxw");
+                            self.asserts.push(format!(
+                                "(assert (= {m} (ite (>= {prev} {cw}) {prev} {cw})))"
+                            ));
+                            m
+                        }
+                    });
+                }
+                format!("(+ {} {two_pad})", acc.unwrap_or_else(|| "0".to_string()))
+            }
+        };
+        let res = self.clamp_min_max_smt(raw, &node.props.min_w, &node.props.max_w);
+        self.intrinsic_w_cache.insert(key, res.clone());
+        res
+    }
+
+    fn encode_intrinsic_h(&mut self, node: &FormaNode) -> String {
+        let key = node as *const FormaNode as usize;
+        if let Some(cached) = self.intrinsic_h_cache.get(&key) {
+            return cached.clone();
+        }
+        let raw = if let Some(h_expr) = &node.props.h {
+            self.encode_expr(h_expr)
+        } else if node.kind == FormaNodeKind::Text {
+            self.encode_opt_int(&node.props.size, "16")
+        } else {
+            let flow_children: Vec<&FormaNode> = node
+                .children
+                .iter()
+                .filter(|c| !c.kind.is_overlay())
+                .collect();
+            let pad_default = self.encode_opt_int(&node.props.pad, "0");
+            let pad_y = self.encode_opt_int(&node.props.pad_y, &pad_default);
+            let two_pad = format!("(* 2 {pad_y})");
+            if flow_children.is_empty() {
+                two_pad
+            } else if node.kind == FormaNodeKind::Col {
+                let mut terms = Vec::with_capacity(flow_children.len());
+                for c in &flow_children {
+                    terms.push(self.encode_intrinsic_h(c));
+                }
+                let gap = self.encode_opt_int(&node.props.gap, "0");
+                let total_gap = if flow_children.len() > 1 {
+                    format!("(* {} {gap})", flow_children.len() - 1)
+                } else {
+                    "0".to_string()
+                };
+                format!("(+ (+ {} {total_gap}) {two_pad})", smt_sum(&terms))
+            } else {
+                let mut acc: Option<String> = None;
+                for c in &flow_children {
+                    let ch = self.encode_intrinsic_h(c);
+                    acc = Some(match acc {
+                        None => ch,
+                        Some(prev) => {
+                            let m = self.fresh_int("mxh");
+                            self.asserts.push(format!(
+                                "(assert (= {m} (ite (>= {prev} {ch}) {prev} {ch})))"
+                            ));
+                            m
+                        }
+                    });
+                }
+                format!("(+ {} {two_pad})", acc.unwrap_or_else(|| "0".to_string()))
+            }
+        };
+        let res = self.clamp_min_max_smt(raw, &node.props.min_h, &node.props.max_h);
+        self.intrinsic_h_cache.insert(key, res.clone());
+        res
     }
 
     fn encode_expr(&mut self, expr: &Expr) -> String {
@@ -402,9 +573,27 @@ impl FormaSmtBuilder {
             }
             _ => {
                 for (ci, child) in flow_children.iter().enumerate() {
-                    let cw_e = self.encode_opt_int(&child.props.w, &iw);
+                    let cw_e = if Self::has_intrinsic_w(child) {
+                        let iw_c = self.encode_intrinsic_w(child);
+                        if child.props.shrink.is_some() {
+                            format!("(ite (<= {iw_c} {iw}) {iw_c} {iw})")
+                        } else {
+                            iw_c
+                        }
+                    } else {
+                        self.clamp_min_max_smt(iw.clone(), &child.props.min_w, &child.props.max_w)
+                    };
                     let cw = self.define_int(&format!("n{nid}_c{ci}_w"), &cw_e);
-                    let ch_e = self.encode_opt_int(&child.props.h, &ih);
+                    let ch_e = if Self::has_intrinsic_h(child) {
+                        let ih_c = self.encode_intrinsic_h(child);
+                        if child.props.shrink.is_some() {
+                            format!("(ite (<= {ih_c} {ih}) {ih_c} {ih})")
+                        } else {
+                            ih_c
+                        }
+                    } else {
+                        self.clamp_min_max_smt(ih.clone(), &child.props.min_h, &child.props.max_h)
+                    };
                     let ch = self.define_int(&format!("n{nid}_c{ci}_h"), &ch_e);
                     let default_cx = align_pos_smt(&ix, &iw, &cw, align);
                     let default_cy = align_pos_smt(&iy, &ih, &ch, align);
@@ -501,37 +690,140 @@ impl FormaSmtBuilder {
             "0".to_string()
         };
 
-        // Pass 1: measure fixed widths and flex weights.
+        // Pass 1: measure fixed/intrinsic widths, shrink weights, and flex weights.
+        let mut base_sized: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut shrink_weights: Vec<Option<String>> = Vec::with_capacity(n);
         let mut fixed_terms = Vec::new();
+        let mut shrink_terms = Vec::new();
         let mut grow_weights: Vec<Option<String>> = Vec::with_capacity(n);
         let mut grow_terms = Vec::new();
-        for child in children {
-            if let Some(w_expr) = &child.props.w {
-                fixed_terms.push(self.encode_expr(w_expr));
+        let mut uses_forma2_sizing = false;
+
+        for (ci, child) in children.iter().enumerate() {
+            if Self::has_intrinsic_w(child) {
+                if child.props.w_fit
+                    || child.kind == FormaNodeKind::Text
+                    || child.props.shrink.is_some()
+                    || child.props.max_w.is_some()
+                {
+                    uses_forma2_sizing = true;
+                }
+                let bw_e = if child.props.w_fit
+                    || child.kind == FormaNodeKind::Text
+                    || child.props.min_w.is_some()
+                    || child.props.max_w.is_some()
+                {
+                    self.encode_intrinsic_w(child)
+                } else {
+                    self.encode_expr(child.props.w.as_ref().unwrap())
+                };
+                let bw = self.define_int(&format!("n{nid}_rbw{ci}"), &bw_e);
+                fixed_terms.push(bw.clone());
+                base_sized.push(Some(bw));
                 grow_weights.push(None);
+                if let Some(sh) = &child.props.shrink {
+                    let s = self.encode_expr(sh);
+                    shrink_terms.push(s.clone());
+                    shrink_weights.push(Some(s));
+                } else {
+                    shrink_weights.push(None);
+                }
             } else {
                 let g = self.encode_opt_int(&child.props.grow, "1");
                 grow_terms.push(g.clone());
                 grow_weights.push(Some(g));
+                base_sized.push(None);
+                shrink_weights.push(None);
             }
         }
+
+        let mut final_sized = base_sized.clone();
+        if !shrink_terms.is_empty() {
+            let raw_fixed = smt_sum(&fixed_terms);
+            let over_raw = format!("(- (+ {raw_fixed} {total_gap}) {iw})");
+            let over = self.define_int(
+                &format!("n{nid}_ovw"),
+                &format!("(ite (>= {over_raw} 0) {over_raw} 0)"),
+            );
+            let ts = self.define_int(&format!("n{nid}_tsw"), &smt_sum(&shrink_terms));
+            fixed_terms.clear();
+            for (ci, child) in children.iter().enumerate() {
+                if let Some(bv) = &base_sized[ci] {
+                    if let Some(sh) = &shrink_weights[ci] {
+                        let red = format!("(ite (> {ts} 0) (div (* {over} {sh}) {ts}) 0)");
+                        let mn = self.encode_opt_int(&child.props.min_w, "0");
+                        let sub = format!("(- {bv} {red})");
+                        let sv = self.define_int(
+                            &format!("n{nid}_rsw{ci}"),
+                            &format!("(ite (>= {sub} {mn}) {sub} {mn})"),
+                        );
+                        fixed_terms.push(sv.clone());
+                        final_sized[ci] = Some(sv);
+                    } else {
+                        fixed_terms.push(bv.clone());
+                    }
+                }
+            }
+        }
+
         let fixed_w = smt_sum(&fixed_terms);
         let total_grow = smt_sum(&grow_terms);
         let flex_count = grow_terms.len();
-        let rem_w = self.define_int(
-            &format!("n{nid}_rem_w"),
-            &format!("(- (- {iw} {fixed_w}) {total_gap})"),
-        );
+        let rem_raw = format!("(- (- {iw} {fixed_w}) {total_gap})");
+        let rem_e = if uses_forma2_sizing {
+            format!("(ite (>= {rem_raw} 0) {rem_raw} 0)")
+        } else {
+            rem_raw
+        };
+        let rem_w = self.define_int(&format!("n{nid}_rem_w"), &rem_e);
+
+        // Main-axis justify when flex_count == 0.
+        let justify = parent.props.justify.unwrap_or(Justify::Start);
+        let (mut cur_x, step_gap) = if flex_count == 0 && justify != Justify::Start {
+            let free_raw = format!("(- (- {iw} {fixed_w}) {total_gap})");
+            let free_w = self.define_int(
+                &format!("n{nid}_frw"),
+                &format!("(ite (>= {free_raw} 0) {free_raw} 0)"),
+            );
+            match justify {
+                Justify::Start => (ix.to_string(), gap.clone()),
+                Justify::Center => (format!("(+ {ix} (div {free_w} 2))"), gap.clone()),
+                Justify::End => (format!("(+ {ix} {free_w})"), gap.clone()),
+                Justify::SpaceBetween => {
+                    if n > 1 {
+                        let sg = self.define_int(
+                            &format!("n{nid}_rsg"),
+                            &format!("(+ {gap} (div {free_w} {}))", n - 1),
+                        );
+                        (ix.to_string(), sg)
+                    } else {
+                        (ix.to_string(), gap.clone())
+                    }
+                }
+                Justify::SpaceAround => {
+                    let extra = self.define_int(
+                        &format!("n{nid}_rsa"),
+                        &format!("(div {free_w} {n})"),
+                    );
+                    let sg = self.define_int(
+                        &format!("n{nid}_rsg"),
+                        &format!("(+ {gap} {extra})"),
+                    );
+                    (format!("(+ {ix} (div {extra} 2))"), sg)
+                }
+            }
+        } else {
+            (ix.to_string(), gap.clone())
+        };
 
         // Pass 2: arrange left-to-right.
-        let mut cur_x = ix.to_string();
         let mut alloc_terms = Vec::new();
         let mut flex_seen = 0usize;
         let mut prev_rect_and_guard: Option<(String, String, String)> = None;
 
         for (ci, child) in children.iter().enumerate() {
-            let cw_expr = if let Some(w_expr) = &child.props.w {
-                self.encode_expr(w_expr)
+            let cw_expr = if let Some(sv) = &final_sized[ci] {
+                sv.clone()
             } else {
                 let g = grow_weights[ci].as_ref().unwrap();
                 flex_seen += 1;
@@ -545,7 +837,11 @@ impl FormaSmtBuilder {
                 }
             };
             let cw = self.define_int(&format!("n{nid}_r{ci}_w"), &cw_expr);
-            let ch_e = self.encode_opt_int(&child.props.h, ih);
+            let ch_e = if Self::has_intrinsic_h(child) {
+                self.encode_intrinsic_h(child)
+            } else {
+                self.clamp_min_max_smt(ih.to_string(), &child.props.min_h, &child.props.max_h)
+            };
             let ch = self.define_int(&format!("n{nid}_r{ci}_h"), &ch_e);
             let cx = self.define_int(&format!("n{nid}_r{ci}_x"), &cur_x);
             let cy = self.define_int(
@@ -592,7 +888,7 @@ impl FormaSmtBuilder {
             }
 
             prev_rect_and_guard = Some((cx.clone(), cw.clone(), c_vis));
-            cur_x = format!("(+ (+ {cx} {cw}) {gap})");
+            cur_x = format!("(+ (+ {cx} {cw}) {step_gap})");
 
             self.check_node(
                 child,
@@ -637,37 +933,140 @@ impl FormaSmtBuilder {
             "0".to_string()
         };
 
-        // Pass 1: measure fixed heights and flex weights.
+        // Pass 1: measure fixed/intrinsic heights, shrink weights, and flex weights.
+        let mut base_sized: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut shrink_weights: Vec<Option<String>> = Vec::with_capacity(n);
         let mut fixed_terms = Vec::new();
+        let mut shrink_terms = Vec::new();
         let mut grow_weights: Vec<Option<String>> = Vec::with_capacity(n);
         let mut grow_terms = Vec::new();
-        for child in children {
-            if let Some(h_expr) = &child.props.h {
-                fixed_terms.push(self.encode_expr(h_expr));
+        let mut uses_forma2_sizing = false;
+
+        for (ci, child) in children.iter().enumerate() {
+            if Self::has_intrinsic_h(child) {
+                if child.props.h_fit
+                    || child.kind == FormaNodeKind::Text
+                    || child.props.shrink.is_some()
+                    || child.props.max_h.is_some()
+                {
+                    uses_forma2_sizing = true;
+                }
+                let bh_e = if child.props.h_fit
+                    || child.kind == FormaNodeKind::Text
+                    || child.props.min_h.is_some()
+                    || child.props.max_h.is_some()
+                {
+                    self.encode_intrinsic_h(child)
+                } else {
+                    self.encode_expr(child.props.h.as_ref().unwrap())
+                };
+                let bh = self.define_int(&format!("n{nid}_kbh{ci}"), &bh_e);
+                fixed_terms.push(bh.clone());
+                base_sized.push(Some(bh));
                 grow_weights.push(None);
+                if let Some(sh) = &child.props.shrink {
+                    let s = self.encode_expr(sh);
+                    shrink_terms.push(s.clone());
+                    shrink_weights.push(Some(s));
+                } else {
+                    shrink_weights.push(None);
+                }
             } else {
                 let g = self.encode_opt_int(&child.props.grow, "1");
                 grow_terms.push(g.clone());
                 grow_weights.push(Some(g));
+                base_sized.push(None);
+                shrink_weights.push(None);
             }
         }
+
+        let mut final_sized = base_sized.clone();
+        if !shrink_terms.is_empty() {
+            let raw_fixed = smt_sum(&fixed_terms);
+            let over_raw = format!("(- (+ {raw_fixed} {total_gap}) {ih})");
+            let over = self.define_int(
+                &format!("n{nid}_ovh"),
+                &format!("(ite (>= {over_raw} 0) {over_raw} 0)"),
+            );
+            let ts = self.define_int(&format!("n{nid}_tsh"), &smt_sum(&shrink_terms));
+            fixed_terms.clear();
+            for (ci, child) in children.iter().enumerate() {
+                if let Some(bv) = &base_sized[ci] {
+                    if let Some(sh) = &shrink_weights[ci] {
+                        let red = format!("(ite (> {ts} 0) (div (* {over} {sh}) {ts}) 0)");
+                        let mn = self.encode_opt_int(&child.props.min_h, "0");
+                        let sub = format!("(- {bv} {red})");
+                        let sv = self.define_int(
+                            &format!("n{nid}_ksh{ci}"),
+                            &format!("(ite (>= {sub} {mn}) {sub} {mn})"),
+                        );
+                        fixed_terms.push(sv.clone());
+                        final_sized[ci] = Some(sv);
+                    } else {
+                        fixed_terms.push(bv.clone());
+                    }
+                }
+            }
+        }
+
         let fixed_h = smt_sum(&fixed_terms);
         let total_grow = smt_sum(&grow_terms);
         let flex_count = grow_terms.len();
-        let rem_h = self.define_int(
-            &format!("n{nid}_rem_h"),
-            &format!("(- (- {ih} {fixed_h}) {total_gap})"),
-        );
+        let rem_raw = format!("(- (- {ih} {fixed_h}) {total_gap})");
+        let rem_e = if uses_forma2_sizing {
+            format!("(ite (>= {rem_raw} 0) {rem_raw} 0)")
+        } else {
+            rem_raw
+        };
+        let rem_h = self.define_int(&format!("n{nid}_rem_h"), &rem_e);
+
+        // Main-axis justify when flex_count == 0.
+        let justify = parent.props.justify.unwrap_or(Justify::Start);
+        let (mut cur_y, step_gap) = if flex_count == 0 && justify != Justify::Start {
+            let free_raw = format!("(- (- {ih} {fixed_h}) {total_gap})");
+            let free_h = self.define_int(
+                &format!("n{nid}_frh"),
+                &format!("(ite (>= {free_raw} 0) {free_raw} 0)"),
+            );
+            match justify {
+                Justify::Start => (iy.to_string(), gap.clone()),
+                Justify::Center => (format!("(+ {iy} (div {free_h} 2))"), gap.clone()),
+                Justify::End => (format!("(+ {iy} {free_h})"), gap.clone()),
+                Justify::SpaceBetween => {
+                    if n > 1 {
+                        let sg = self.define_int(
+                            &format!("n{nid}_ksg"),
+                            &format!("(+ {gap} (div {free_h} {}))", n - 1),
+                        );
+                        (iy.to_string(), sg)
+                    } else {
+                        (iy.to_string(), gap.clone())
+                    }
+                }
+                Justify::SpaceAround => {
+                    let extra = self.define_int(
+                        &format!("n{nid}_ksa"),
+                        &format!("(div {free_h} {n})"),
+                    );
+                    let sg = self.define_int(
+                        &format!("n{nid}_ksg"),
+                        &format!("(+ {gap} {extra})"),
+                    );
+                    (format!("(+ {iy} (div {extra} 2))"), sg)
+                }
+            }
+        } else {
+            (iy.to_string(), gap.clone())
+        };
 
         // Pass 2: arrange top-to-bottom.
-        let mut cur_y = iy.to_string();
         let mut alloc_terms = Vec::new();
         let mut flex_seen = 0usize;
         let mut prev_rect_and_guard: Option<(String, String, String)> = None;
 
         for (ci, child) in children.iter().enumerate() {
-            let ch_expr = if let Some(h_expr) = &child.props.h {
-                self.encode_expr(h_expr)
+            let ch_expr = if let Some(sv) = &final_sized[ci] {
+                sv.clone()
             } else {
                 let g = grow_weights[ci].as_ref().unwrap();
                 flex_seen += 1;
@@ -681,7 +1080,16 @@ impl FormaSmtBuilder {
                 }
             };
             let ch = self.define_int(&format!("n{nid}_k{ci}_h"), &ch_expr);
-            let cw_e = self.encode_opt_int(&child.props.w, iw);
+            let cw_e = if Self::has_intrinsic_w(child) {
+                let iw_c = self.encode_intrinsic_w(child);
+                if child.props.shrink.is_some() {
+                    format!("(ite (<= {iw_c} {iw}) {iw_c} {iw})")
+                } else {
+                    iw_c
+                }
+            } else {
+                self.clamp_min_max_smt(iw.to_string(), &child.props.min_w, &child.props.max_w)
+            };
             let cw = self.define_int(&format!("n{nid}_k{ci}_w"), &cw_e);
             let cy = self.define_int(&format!("n{nid}_k{ci}_y"), &cur_y);
             let cx = self.define_int(
@@ -728,7 +1136,7 @@ impl FormaSmtBuilder {
             }
 
             prev_rect_and_guard = Some((cy.clone(), ch.clone(), c_vis));
-            cur_y = format!("(+ (+ {cy} {ch}) {gap})");
+            cur_y = format!("(+ (+ {cy} {ch}) {step_gap})");
 
             self.check_node(
                 child,
@@ -826,8 +1234,16 @@ pub fn verify_forma(forma: &FormaDef) -> Result<FormaVerifyReport, AxiomDiagnost
     // Root rectangle and root clip rectangle.
     let rx_e = builder.encode_opt_int(&forma.root.props.x, "0");
     let ry_e = builder.encode_opt_int(&forma.root.props.y, "0");
-    let rw_e = builder.encode_opt_int(&forma.root.props.w, "0");
-    let rh_e = builder.encode_opt_int(&forma.root.props.h, "0");
+    let rw_e = if forma.root.props.w_fit {
+        builder.encode_intrinsic_w(&forma.root)
+    } else {
+        builder.encode_opt_int(&forma.root.props.w, "0")
+    };
+    let rh_e = if forma.root.props.h_fit {
+        builder.encode_intrinsic_h(&forma.root)
+    } else {
+        builder.encode_opt_int(&forma.root.props.h, "0")
+    };
     let rx = builder.define_int("root_x", &rx_e);
     let ry = builder.define_int("root_y", &ry_e);
     let rw = builder.define_int("root_w", &rw_e);

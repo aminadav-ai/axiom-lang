@@ -29,6 +29,61 @@ impl Align {
     }
 }
 
+/// Main-axis distribution inside `Row` and `Col` (CSS Flexbox `justify-content`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Justify {
+    #[default]
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+}
+
+impl Justify {
+    pub fn from_ident(s: &str) -> Option<Self> {
+        match s {
+            "start" => Some(Justify::Start),
+            "center" => Some(Justify::Center),
+            "end" => Some(Justify::End),
+            "space_between" => Some(Justify::SpaceBetween),
+            "space_around" => Some(Justify::SpaceAround),
+            _ => None,
+        }
+    }
+}
+
+/// Overflow handling for `Text` and constrained containers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Overflow {
+    #[default]
+    Visible,
+    Clip,
+    Ellipsis,
+    Wrap,
+}
+
+impl Overflow {
+    pub fn from_ident(s: &str) -> Option<Self> {
+        match s {
+            "visible" => Some(Overflow::Visible),
+            "clip" => Some(Overflow::Clip),
+            "ellipsis" => Some(Overflow::Ellipsis),
+            "wrap" => Some(Overflow::Wrap),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(self) -> i64 {
+        match self {
+            Overflow::Visible => 0,
+            Overflow::Clip => 1,
+            Overflow::Ellipsis => 2,
+            Overflow::Wrap => 3,
+        }
+    }
+}
+
 /// Built-in declarative `Axiom.Forma` node kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormaNodeKind {
@@ -108,14 +163,23 @@ pub struct FormaProps<E = Expr> {
     pub y: Option<E>,
     pub w: Option<E>,
     pub h: Option<E>,
+    #[serde(default)]
+    pub w_fit: bool,
+    #[serde(default)]
+    pub h_fit: bool,
     pub min_w: Option<E>,
     pub min_h: Option<E>,
+    pub max_w: Option<E>,
+    pub max_h: Option<E>,
     pub grow: Option<E>,
+    pub shrink: Option<E>,
     pub pad: Option<E>,
     pub pad_x: Option<E>,
     pub pad_y: Option<E>,
     pub gap: Option<E>,
     pub align: Option<Align>,
+    pub justify: Option<Justify>,
+    pub overflow: Option<Overflow>,
     pub bg: Option<E>,
     pub hover_bg: Option<E>,
     pub border: Option<E>,
@@ -141,14 +205,21 @@ impl<E> Default for FormaProps<E> {
             y: None,
             w: None,
             h: None,
+            w_fit: false,
+            h_fit: false,
             min_w: None,
             min_h: None,
+            max_w: None,
+            max_h: None,
             grow: None,
+            shrink: None,
             pad: None,
             pad_x: None,
             pad_y: None,
             gap: None,
             align: None,
+            justify: None,
+            overflow: None,
             bg: None,
             hover_bg: None,
             border: None,
@@ -187,14 +258,21 @@ impl<E> FormaProps<E> {
             y: self.y.map(&mut *f).transpose()?,
             w: self.w.map(&mut *f).transpose()?,
             h: self.h.map(&mut *f).transpose()?,
+            w_fit: self.w_fit,
+            h_fit: self.h_fit,
             min_w: self.min_w.map(&mut *f).transpose()?,
             min_h: self.min_h.map(&mut *f).transpose()?,
+            max_w: self.max_w.map(&mut *f).transpose()?,
+            max_h: self.max_h.map(&mut *f).transpose()?,
             grow: self.grow.map(&mut *f).transpose()?,
+            shrink: self.shrink.map(&mut *f).transpose()?,
             pad: self.pad.map(&mut *f).transpose()?,
             pad_x: self.pad_x.map(&mut *f).transpose()?,
             pad_y: self.pad_y.map(&mut *f).transpose()?,
             gap: self.gap.map(&mut *f).transpose()?,
             align: self.align,
+            justify: self.justify,
+            overflow: self.overflow,
             bg: self.bg.map(&mut *f).transpose()?,
             hover_bg: self.hover_bg.map(&mut *f).transpose()?,
             border: self.border.map(&mut *f).transpose()?,
