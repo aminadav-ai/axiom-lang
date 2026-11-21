@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Axiom Language Contributors
+// License: BUSL-1.1
+//
+// Axiom Standard Library: std/buf.ax
+// Z3-safe UTF-32 linear-memory buffer writer and search primitives.
+// Convention: `mem_load(buf_ptr)` stores current length; elements at `buf_ptr + 1 + i`.
+
+use "std/math.ax";
+
+fn buf_len(buf_ptr: i64, max_len: i64) -[Mem]-> i64 {
+  clamp_i64(mem_load(buf_ptr), 0, max_i64(max_len, 0))
+}
+
+fn buf_clear(buf_ptr: i64) -[Mem]-> unit {
+  mem_store(buf_ptr, 0);
+}
+
+fn buf_push_cp(buf_ptr: i64, max_len: i64, cp: i64) -[Mem]-> unit {
+  let cap = max_i64(max_len, 0);
+  let n = clamp_i64(mem_load(buf_ptr), 0, cap);
+  if n < cap {
+    mem_store(buf_ptr + 1 + n, cp);
+    mem_store(buf_ptr, n + 1);
+  }
+}
+
+fn buf_push_int(buf_ptr: i64, max_len: i64, val: i64) -[Mem]-> unit {
+  let mut v = val;
+  if v < 0 {
+    buf_push_cp(buf_ptr, max_len, '-');
+    v = -v;
+  };
+  if v == 0 {
+    buf_push_cp(buf_ptr, max_len, '0');
+  } else {
+    let mut div = 1;
+    let mut tmp = v;
+    while tmp >= 10 max 20 {
+      tmp = tmp / 10;
+      div = div * 10;
+    }
+    let mut rem = v;
+    while div > 0 max 20 {
+      let d = rem / div;
+      buf_push_cp(buf_ptr, max_len, '0' + d);
+      rem = rem % div;
+      div = div / 10;
+    }
+  }
+}
+
+// Append `src[src_start .. src_start + src_len)` into `dst` with JSON string escaping.
+fn buf_push_json_escaped(dst_ptr: i64, dst_max: i64, src_ptr: i64, src_start: i64, src_len: i64) -[Mem]-> unit {
+  let lim = clamp_i64(src_len, 0, 16384);
+  let mut i = 0;
+  while i < lim max 16384 {
+    let cp = mem_load(src_ptr + 1 + src_start + i);
+    if cp == '"' {
+      buf_push_cp(dst_ptr, dst_max, '\\');
+      buf_push_cp(dst_ptr, dst_max, '"');
+    } else if cp == '\\' {
+      buf_push_cp(dst_ptr, dst_max, '\\');
+      buf_push_cp(dst_ptr, dst_max, '\\');
+    } else if cp == '\n' {
+      buf_push_cp(dst_ptr, dst_max, '\\');
+      buf_push_cp(dst_ptr, dst_max, 'n');
+    } else if cp == '\r' {
+      buf_push_cp(dst_ptr, dst_max, '\\');
+      buf_push_cp(dst_ptr, dst_max, 'r');
+    } else if cp == '\t' {
+      buf_push_cp(dst_ptr, dst_max, '\\');
+      buf_push_cp(dst_ptr, dst_max, 't');
+    } else {
+      buf_push_cp(dst_ptr, dst_max, cp);
+    };
+    i += 1;
+  }
+}
+
+fn buf_eq_slice(a_ptr: i64, a_start: i64, a_len: i64, b_ptr: i64, b_start: i64, b_len: i64) -[Mem]-> bool {
+  if a_len != b_len || a_len < 0 {
+    false
+  } else {
+    let lim = clamp_i64(a_len, 0, 4096);
+    let mut i = 0;
+    let mut eq = true;
+    while i < lim && eq max 4096 {
+      if mem_load(a_ptr + 1 + a_start + i) != mem_load(b_ptr + 1 + b_start + i) {
+        eq = false;
+      };
+      i += 1;
+    }
+    eq
+  }
+}
+
+fn buf_find_cp(buf_ptr: i64, start: i64, end: i64, cp: i64) -[Mem]-> i64 {
+  let mut i = max_i64(start, 0);
+  let mut found = -1;
+  while i < end && found < 0 max 16384 {
+    if mem_load(buf_ptr + 1 + i) == cp {
+      found = i;
+    } else {
+      i += 1;
+    }
+  }
+  found
+}

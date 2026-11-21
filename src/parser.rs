@@ -207,6 +207,8 @@ fn resolve_embedded_std(spec: &str) -> Option<(&'static str, &'static str)> {
         "std/markdown" | "std/markdown.ax" => {
             Some(("__std__/markdown.ax", include_str!("../std/markdown.ax")))
         }
+        "std/buf" | "std/buf.ax" => Some(("__std__/buf.ax", include_str!("../std/buf.ax"))),
+        "std/json" | "std/json.ax" => Some(("__std__/json.ax", include_str!("../std/json.ax"))),
         "std/prelude" | "std/prelude.ax" => {
             Some(("__std__/prelude.ax", include_str!("../std/prelude.ax")))
         }
@@ -229,7 +231,7 @@ fn load_std_recursive(
             "parse",
             format!("Unknown built-in Axiom stdlib module '{spec}'"),
             use_span,
-            "Available stdlib modules: std/prelude.ax, std/math.ax, std/color.ax, std/gfx.ax, std/text.ax, std/audio.ax, std/fmt.ax, std/theme.ax, std/icons.ax, std/ui.ax, std/text_edit.ax, std/markdown.ax",
+            "Available stdlib modules: std/prelude.ax, std/math.ax, std/color.ax, std/gfx.ax, std/input.ax, std/text.ax, std/audio.ax, std/fmt.ax, std/theme.ax, std/icons.ax, std/ui.ax, std/text_edit.ax, std/markdown.ax, std/buf.ax, std/json.ax",
         ));
     };
     let canon = PathBuf::from(virtual_key);
