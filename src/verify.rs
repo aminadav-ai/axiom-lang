@@ -753,8 +753,11 @@ pub fn callee_contract_digest(callee: &CanonicalNode) -> String {
     sha256_hex(payload.as_bytes())
 }
 
-/// Compute the cryptographically sound Z3 proof cache key:
-/// `SHA-256(PROOF_CACHE_SCHEMA_VERSION, node.hash, sorted [(callee_hash, callee_contract_digest)], z3_version)`.
+/// Compute the cryptographically sound, contract-invariant Z3 proof cache key:
+/// replaces callee implementation hashes in `node.ast` with each callee's
+/// contract digest (`params`, `ret_type`, `effects`, `requires`, `ensures`).
+/// Thus editing a callee's body without changing its contract yields a 100% cache hit
+/// for all callers, while any contract or caller-body change triggers Z3 re-verification.
 pub fn compute_proof_key<F>(
     node: &CanonicalNode,
     load_callee: &F,
@@ -763,21 +766,57 @@ pub fn compute_proof_key<F>(
 where
     F: Fn(&str) -> Result<CanonicalNode, AxiomDiagnostic>,
 {
-    let mut callee_contracts: Vec<(String, String)> = Vec::with_capacity(node.direct_deps.len());
+    let mut ast_json = serde_json::to_string(&node.ast).unwrap_or_default();
+    let mut callee_contracts: Vec<String> = Vec::with_capacity(node.direct_deps.len());
     for dep_hash in &node.direct_deps {
         let callee = load_callee(dep_hash)?;
-        callee_contracts.push((dep_hash.clone(), callee_contract_digest(&callee)));
+        let cdig = callee_contract_digest(&callee);
+        let replacement = format!("contract:{cdig}");
+        ast_json = ast_json.replace(dep_hash.as_str(), &replacement);
+        callee_contracts.push(cdig);
     }
     callee_contracts.sort();
 
     let key_material = serde_json::to_string(&(
         PROOF_CACHE_SCHEMA_VERSION,
-        &node.hash,
+        "fn-contract-v2",
+        &ast_json,
         &callee_contracts,
         z3_version,
     ))
     .unwrap_or_default();
     Ok(sha256_hex(key_material.as_bytes()))
+}
+
+fn strip_spans_json(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            map.remove("span");
+            for val in map.values_mut() {
+                strip_spans_json(val);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for val in arr.iter_mut() {
+                strip_spans_json(val);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Compute a span-insensitive Z3 proof cache key for an `Axiom.Forma` layout block.
+pub fn compute_forma_proof_key(forma: &crate::forma::ast::FormaDef, z3_version: &str) -> String {
+    let mut val = serde_json::to_value(forma).unwrap_or(serde_json::Value::Null);
+    strip_spans_json(&mut val);
+    let key_material = serde_json::to_string(&(
+        PROOF_CACHE_SCHEMA_VERSION,
+        "forma-v1",
+        &val,
+        z3_version,
+    ))
+    .unwrap_or_default();
+    sha256_hex(key_material.as_bytes())
 }
 
 pub(crate) fn find_z3_binary() -> Result<PathBuf, AxiomDiagnostic> {

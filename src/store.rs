@@ -3,12 +3,14 @@ use crate::canon::{canonicalize_fn, CanonicalNode};
 use crate::diag::{AxiomDiagnostic, Span};
 use crate::typecheck::{typecheck_node, DirectSecretSink};
 use crate::verify::{
-    compute_proof_key, verify_node, z3_version_id, VerificationReport, PROOF_CACHE_SCHEMA_VERSION,
+    compute_forma_proof_key, compute_proof_key, verify_node, z3_version_id, VerificationReport,
+    PROOF_CACHE_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -221,53 +223,6 @@ impl GraphStore {
         })
     }
 
-    fn verify_node_with_cache<F>(
-        &self,
-        raw_fn: &FnDef,
-        node: &CanonicalNode,
-        loader: &F,
-        use_cache: bool,
-        z3_version: &str,
-        cache_dirty: &mut bool,
-    ) -> Result<VerificationReport, AxiomDiagnostic>
-    where
-        F: Fn(&str) -> Result<CanonicalNode, AxiomDiagnostic>,
-    {
-        let proof_key = compute_proof_key(node, loader, z3_version)?;
-
-        if use_cache {
-            if let Ok(guard) = self.proof_cache.lock() {
-                if let Some(entry) = guard.entries.get(&proof_key) {
-                    return Ok(VerificationReport {
-                        alias: raw_fn.name.clone(),
-                        short_hash: node.short_hash.clone(),
-                        obligations_checked: entry.obligations_checked,
-                        elapsed_ms: 0,
-                        status: "PROVED (cached)".to_string(),
-                        cached: true,
-                    });
-                }
-            }
-        }
-
-        // Run Z3; errors / counterexamples return Err immediately and are NEVER cached.
-        let report = verify_node(raw_fn, node, loader)?;
-
-        if let Ok(mut guard) = self.proof_cache.lock() {
-            guard.entries.insert(
-                proof_key,
-                ProofCacheEntry {
-                    obligations_checked: report.obligations_checked,
-                    node_hash: node.hash.clone(),
-                    z3_version: z3_version.to_string(),
-                },
-            );
-            *cache_dirty = true;
-        }
-
-        Ok(report)
-    }
-
     fn save_aliases(&self) -> Result<(), AxiomDiagnostic> {
         let json = serde_json::to_string_pretty(&self.aliases).map_err(|e| {
             AxiomDiagnostic::new(
@@ -411,97 +366,119 @@ impl GraphStore {
         self.verify_module_with_cache(module, true)
     }
 
-    pub fn verify_module_with_cache(
+    fn verify_module_formas_with_cache(
         &self,
         module: &Module,
         use_cache: bool,
-    ) -> Result<Vec<VerificationReport>, AxiomDiagnostic> {
-        crate::forma::verify_ui::verify_module_formas(module)?;
-        let order = topo_sort_functions(&module.functions)?;
-        let z3_version = z3_version_id()?;
-        let mut temp_aliases = self.aliases.clone();
-        let mut temp_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
-        let mut reports = Vec::with_capacity(order.len());
-        let mut cache_dirty = false;
-
-        for idx in order {
-            let raw_fn = &module.functions[idx];
-            let mut node = canonicalize_fn(
-                raw_fn,
-                &|callee| {
-                    temp_aliases.get(callee).cloned().ok_or_else(|| {
-                        AxiomDiagnostic::new(
-                            "E022_UNKNOWN_FUNCTION",
-                            "resolve",
-                            format!(
-                                "Function '{}' calls unknown function '{callee}'",
-                                raw_fn.name
-                            ),
-                            Span::zero(),
-                            "Define the callee in the same input or ingest it into .axiom first",
-                        )
-                    })
-                },
-                &|prefix| self.resolve_hash_prefix(prefix),
-            )?;
-
-            let loader = |dep_hash: &str| -> Result<CanonicalNode, AxiomDiagnostic> {
-                if let Some(mem_node) = temp_nodes.get(dep_hash) {
-                    Ok(mem_node.clone())
-                } else {
-                    self.load_node(dep_hash)
-                }
+        z3_version: &str,
+        cache_dirty: &mut bool,
+    ) -> Result<(), AxiomDiagnostic> {
+        if module.formas.is_empty() {
+            return Ok(());
+        }
+        let mut misses: Vec<(usize, String)> = Vec::new();
+        for (i, forma) in module.formas.iter().enumerate() {
+            let key = compute_forma_proof_key(forma, z3_version);
+            let hit = if use_cache {
+                self.proof_cache
+                    .lock()
+                    .ok()
+                    .map(|g| g.entries.contains_key(&key))
+                    .unwrap_or(false)
+            } else {
+                false
             };
+            if !hit {
+                misses.push((i, key));
+            }
+        }
+        if misses.is_empty() {
+            return Ok(());
+        }
 
-            node.direct_secret_sinks = typecheck_node(&raw_fn.name, &node, &loader)?;
-            let report = match self.verify_node_with_cache(
-                raw_fn,
-                &node,
-                &loader,
-                use_cache,
-                &z3_version,
-                &mut cache_dirty,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    if cache_dirty {
-                        let _ = self.save_proof_cache();
+        let results: Mutex<Vec<(usize, String, Result<usize, AxiomDiagnostic>)>> =
+            Mutex::new(Vec::with_capacity(misses.len()));
+        let next_idx = AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(misses.len())
+            .max(1);
+
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| loop {
+                    let pos = next_idx.fetch_add(1, Ordering::Relaxed);
+                    if pos >= misses.len() {
+                        break;
                     }
-                    return Err(e);
+                    let (fi, ref key) = misses[pos];
+                    let res = crate::forma::verify_ui::verify_forma(&module.formas[fi])
+                        .map(|r| r.obligations_proved);
+                    if let Ok(mut g) = results.lock() {
+                        g.push((fi, key.clone(), res));
+                    }
+                });
+            }
+        });
+
+        let mut drained = results.into_inner().unwrap_or_default();
+        drained.sort_by_key(|(fi, _, _)| *fi);
+        let mut first_err: Option<AxiomDiagnostic> = None;
+        for (fi, key, res) in drained {
+            match res {
+                Ok(obligations) => {
+                    if let Ok(mut guard) = self.proof_cache.lock() {
+                        guard.entries.insert(
+                            key,
+                            ProofCacheEntry {
+                                obligations_checked: obligations,
+                                node_hash: format!("forma:{}", module.formas[fi].name),
+                                z3_version: z3_version.to_string(),
+                            },
+                        );
+                        *cache_dirty = true;
+                    }
                 }
-            };
-
-            temp_aliases.insert(raw_fn.name.clone(), node.hash.clone());
-            temp_nodes.insert(node.hash.clone(), node);
-            reports.push(report);
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
         }
-
-        if cache_dirty {
-            self.save_proof_cache()?;
+        if let Some(e) = first_err {
+            return Err(e);
         }
-
-        Ok(reports)
+        Ok(())
     }
 
-    pub fn ingest_module(&mut self, module: &Module) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
-        self.ingest_module_with_cache(module, true)
-    }
-
-    pub fn ingest_module_with_cache(
-        &mut self,
+    /// Two-phase incremental + parallel verification for all functions in `module`.
+    /// Phase A (sequential, ~5ms): canonicalize, typecheck, compute contract-invariant proof keys, lookup cache.
+    /// Phase B (parallel across CPU cores): verify only cache misses via Z3 simultaneously.
+    fn stage_and_verify_module(
+        &self,
         module: &Module,
         use_cache: bool,
-    ) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
-        crate::forma::verify_ui::verify_module_formas(module)?;
-        let order = topo_sort_functions(&module.functions)?;
+    ) -> Result<Vec<(String, CanonicalNode, VerificationReport)>, AxiomDiagnostic> {
         let z3_version = z3_version_id()?;
-        let mut staged_aliases = self.aliases.clone();
-        let mut staged_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
-        let mut staged_entries = Vec::with_capacity(order.len());
         let mut cache_dirty = false;
 
-        // Phase 1: Canonicalize + typecheck/taint-check + formally verify via Z3 (or proof cache) before committing!
-        for idx in order {
+        if let Err(e) = self.verify_module_formas_with_cache(module, use_cache, &z3_version, &mut cache_dirty) {
+            if cache_dirty {
+                let _ = self.save_proof_cache();
+            }
+            return Err(e);
+        }
+
+        let order = topo_sort_functions(&module.functions)?;
+        let mut staged_aliases = self.aliases.clone();
+        let mut staged_nodes: BTreeMap<String, CanonicalNode> = BTreeMap::new();
+        let mut items: Vec<(usize, String, CanonicalNode, String, Option<VerificationReport>)> =
+            Vec::with_capacity(order.len());
+
+        // Phase A: Canonicalize + typecheck + contract-invariant proof key lookup
+        for &idx in &order {
             let raw_fn = &module.functions[idx];
             let mut node = canonicalize_fn(
                 raw_fn,
@@ -531,31 +508,144 @@ impl GraphStore {
             };
 
             node.direct_secret_sinks = typecheck_node(&raw_fn.name, &node, &loader)?;
-            let vreport = match self.verify_node_with_cache(
-                raw_fn,
-                &node,
-                &loader,
-                use_cache,
-                &z3_version,
-                &mut cache_dirty,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    if cache_dirty {
-                        let _ = self.save_proof_cache();
-                    }
-                    return Err(e);
-                }
+            let proof_key = compute_proof_key(&node, &loader, &z3_version)?;
+            let cached_report = if use_cache {
+                self.proof_cache
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.entries.get(&proof_key).cloned())
+                    .map(|entry| VerificationReport {
+                        alias: raw_fn.name.clone(),
+                        short_hash: node.short_hash.clone(),
+                        obligations_checked: entry.obligations_checked,
+                        elapsed_ms: 0,
+                        status: "PROVED (cached)".to_string(),
+                        cached: true,
+                    })
+            } else {
+                None
             };
 
             staged_aliases.insert(raw_fn.name.clone(), node.hash.clone());
-            staged_entries.push((raw_fn.name.clone(), node.clone(), vreport));
-            staged_nodes.insert(node.hash.clone(), node);
+            staged_nodes.insert(node.hash.clone(), node.clone());
+            items.push((idx, raw_fn.name.clone(), node, proof_key, cached_report));
+        }
+
+        // Phase B: Verify all cache misses in parallel across CPU cores!
+        let miss_positions: Vec<usize> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, item)| if item.4.is_none() { Some(pos) } else { None })
+            .collect();
+
+        if !miss_positions.is_empty() {
+            let results: Mutex<Vec<(usize, Result<VerificationReport, AxiomDiagnostic>)>> =
+                Mutex::new(Vec::with_capacity(miss_positions.len()));
+            let next_m = AtomicUsize::new(0);
+            let threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(miss_positions.len())
+                .max(1);
+
+            let staged_nodes_ref = &staged_nodes;
+            let items_ref = &items;
+
+            std::thread::scope(|s| {
+                for _ in 0..threads {
+                    s.spawn(|| {
+                        let loader = |dep_hash: &str| -> Result<CanonicalNode, AxiomDiagnostic> {
+                            if let Some(mem_node) = staged_nodes_ref.get(dep_hash) {
+                                Ok(mem_node.clone())
+                            } else {
+                                self.load_node(dep_hash)
+                            }
+                        };
+                        loop {
+                            let mi = next_m.fetch_add(1, Ordering::Relaxed);
+                            if mi >= miss_positions.len() {
+                                break;
+                            }
+                            let pos = miss_positions[mi];
+                            let (fn_idx, _, ref node, _, _) = items_ref[pos];
+                            let raw_fn = &module.functions[fn_idx];
+                            let res = verify_node(raw_fn, node, &loader);
+                            if let Ok(mut g) = results.lock() {
+                                g.push((pos, res));
+                            }
+                        }
+                    });
+                }
+            });
+
+            let mut drained = results.into_inner().unwrap_or_default();
+            drained.sort_by_key(|(pos, _)| *pos);
+            let mut first_err: Option<AxiomDiagnostic> = None;
+            for (pos, res) in drained {
+                match res {
+                    Ok(report) => {
+                        let proof_key = items[pos].3.clone();
+                        let node_hash = items[pos].2.hash.clone();
+                        if let Ok(mut guard) = self.proof_cache.lock() {
+                            guard.entries.insert(
+                                proof_key,
+                                ProofCacheEntry {
+                                    obligations_checked: report.obligations_checked,
+                                    node_hash,
+                                    z3_version: z3_version.clone(),
+                                },
+                            );
+                            cache_dirty = true;
+                        }
+                        items[pos].4 = Some(report);
+                    }
+                    Err(e) => {
+                        if first_err.is_none() {
+                            first_err = Some(e);
+                        }
+                    }
+                }
+            }
+            if let Some(e) = first_err {
+                if cache_dirty {
+                    let _ = self.save_proof_cache();
+                }
+                return Err(e);
+            }
         }
 
         if cache_dirty {
             self.save_proof_cache()?;
         }
+
+        let mut out = Vec::with_capacity(items.len());
+        for (_, name, node, _, rep_opt) in items {
+            if let Some(rep) = rep_opt {
+                out.push((name, node, rep));
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn verify_module_with_cache(
+        &self,
+        module: &Module,
+        use_cache: bool,
+    ) -> Result<Vec<VerificationReport>, AxiomDiagnostic> {
+        let staged = self.stage_and_verify_module(module, use_cache)?;
+        Ok(staged.into_iter().map(|(_, _, r)| r).collect())
+    }
+
+    pub fn ingest_module(&mut self, module: &Module) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
+        self.ingest_module_with_cache(module, true)
+    }
+
+    pub fn ingest_module_with_cache(
+        &mut self,
+        module: &Module,
+        use_cache: bool,
+    ) -> Result<Vec<IngestEntry>, AxiomDiagnostic> {
+        let staged_entries = self.stage_and_verify_module(module, use_cache)?;
 
         // Phase 2: Commit verified nodes atomically into .axiom/nodes/
         let mut results = Vec::with_capacity(staged_entries.len());
