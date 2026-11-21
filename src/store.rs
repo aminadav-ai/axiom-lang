@@ -396,7 +396,8 @@ impl GraphStore {
             return Ok(());
         }
 
-        let results: Mutex<Vec<(usize, String, Result<usize, AxiomDiagnostic>)>> =
+        type VerifyBatchItem = (usize, String, Result<usize, AxiomDiagnostic>);
+        let results: Mutex<Vec<VerifyBatchItem>> =
             Mutex::new(Vec::with_capacity(misses.len()));
         let next_idx = AtomicUsize::new(0);
         let threads = std::thread::available_parallelism()
